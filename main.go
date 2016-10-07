@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
 	"os/exec"
 	"regexp"
 	"strings"
@@ -67,8 +68,15 @@ func age(dur time.Duration) string {
 	return res
 }
 
-func printInfo(uuid string, idx, total int) {
-	cmd := exec.Command("task", uuid, "export")
+// Returns back how much to move the index by.
+func printInfo(uuid string, idx, total int) int {
+	var cmd *exec.Cmd
+	cmd = exec.Command("clear")
+	cmd.Stdout = os.Stdout
+	cmd.Run()
+	fmt.Println()
+
+	cmd = exec.Command("task", uuid, "export")
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	err := cmd.Run()
@@ -121,11 +129,28 @@ func printInfo(uuid string, idx, total int) {
 	pomo(" %-10v ", ptag)
 	fmt.Println()
 	fmt.Println()
+	fmt.Printf("Project:      ")
+	color.New(color.FgYellow).Printf("%s\n", task.Project)
 	fmt.Printf("Tags:         %s\n", strings.Join(rem, " "))
 	fmt.Printf("Started:      %s\n", started.Format(format))
 	fmt.Printf("Completed:    %s\n", finished.Format(format))
 	fmt.Printf("Age:          %v\n", age(finished.Sub(started)))
+	fmt.Printf("UUID:         %s\n", task.Uuid)
 	fmt.Println()
+
+	fmt.Println(`
+	Press ENTER to mark reviewed, s to skip
+	Press r for red task, b for blue task, g for green task
+	Press w to toggle _WaitingFor
+	Press d to set project:Development, t to set project:Technical
+	Press b to go back to the last task
+	`)
+	r := make([]byte, 1)
+	os.Stdin.Read(r)
+	if r[0] == 'b' {
+		return -1
+	}
+	return 1
 }
 
 func parseUuids(out bytes.Buffer) ([]string, error) {
@@ -178,11 +203,20 @@ func getCompletedTasks() ([]string, error) {
 }
 
 func main() {
+	// disable input buffering
+	exec.Command("stty", "-F", "/dev/tty", "cbreak", "min", "1").Run()
+	// do not display entered characters on the screen
+	exec.Command("stty", "-F", "/dev/tty", "-echo").Run()
+
 	uuids, err := getCompletedTasks()
 	if err != nil {
 		log.Fatal(err)
 	}
-	for i, uuid := range uuids {
-		printInfo(uuid, i, len(uuids))
+	for i := 0; i < len(uuids); {
+		if i < 0 || i >= len(uuids) {
+			break
+		}
+		uuid := uuids[i]
+		i += printInfo(uuid, i, len(uuids))
 	}
 }
