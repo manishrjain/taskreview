@@ -140,13 +140,15 @@ func printInfo(uuid string, idx, total int) int {
 	fmt.Println()
 
 	fmt.Println(`
-	Press ENTER to mark reviewed, s to skip
 	Press e to edit description
 	Press t to edit tags
 	Press a to edit assigned
+	Press ENTER to mark reviewed, s to skip
+
 	Press w to toggle _WaitingFor
 	Press d to set project:Development, t to set project:Technical
 	Press b to go back to the last task
+
 	Press q to quit
 	`)
 	r := make([]byte, 1)
@@ -164,23 +166,13 @@ func printInfo(uuid string, idx, total int) int {
 		return editDescription(task)
 	}
 
+	if r[0] == 'a' {
+		return editAssigned(task)
+	}
+
 	// Edit tags.
 	if r[0] == 't' {
-		fmt.Printf("Press g for green, b for blue, r for red ")
-		os.Stdin.Read(r)
-		rem = append(rem, user)
-		if r[0] == 'g' {
-			rem = append(rem, "green")
-		} else if r[0] == 'b' {
-			rem = append(rem, "blue")
-		} else if r[0] == 'r' {
-			rem = append(rem, "red")
-		} else {
-			return 0
-		}
-		task.Tags = rem
-		doImport(task)
-		return 0
+		return editTaskColor(task)
 	}
 	return 1
 }
@@ -196,6 +188,76 @@ func editDescription(t task) int {
 		log.Fatal(err)
 	}
 	t.Description = strings.Trim(desc, " \n")
+	if len(t.Description) > 0 {
+		doImport(t)
+	}
+	return 0
+}
+
+var assigned = map[rune]string{
+	'a': "@ashwin",
+	'j': "@jchiu",
+	'm': "@manish",
+	'p': "@pawan",
+}
+
+func printOptions(mp map[rune]string) {
+	var i color.Attribute
+	for k, v := range mp {
+		color.New(color.FgRed+i).Printf(" %q for %v ", k, v)
+		i++
+		i = i % 6
+	}
+}
+
+func editAssigned(t task) int {
+	color.New(color.BgRed, color.FgWhite).Printf(" Assign To: ")
+	printOptions(assigned)
+	tags := t.Tags[:0]
+	for _, t := range t.Tags {
+		if t[0] != '@' {
+			tags = append(tags, t)
+		}
+	}
+
+	r := make([]byte, 1)
+	os.Stdin.Read(r)
+	ch := rune(r[0])
+	if a, ok := assigned[ch]; ok {
+		tags = append(tags, a)
+	} else {
+		return 0
+	}
+	t.Tags = tags
+	doImport(t)
+	return 0
+}
+
+var taskColors = map[rune]string{
+	'r': "red",
+	'b': "blue",
+	'g': "green",
+}
+
+func editTaskColor(t task) int {
+	color.New(color.BgRed, color.FgWhite).Printf(" Set Task Color: ")
+	printOptions(taskColors)
+	tags := t.Tags[:0]
+	for _, tag := range t.Tags {
+		if tag != "red" && tag != "green" && tag != "blue" {
+			tags = append(tags, tag)
+		}
+	}
+
+	r := make([]byte, 1)
+	os.Stdin.Read(r)
+	ch := rune(r[0])
+	if a, ok := taskColors[ch]; ok {
+		tags = append(tags, a)
+	} else {
+		return 0
+	}
+	t.Tags = tags
 	doImport(t)
 	return 0
 }
@@ -204,12 +266,14 @@ func editDescription(t task) int {
 func doImport(t task) {
 	body, err := json.Marshal(t)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("While importing: %v", err)
 	}
 
 	cmd := fmt.Sprintf("echo -n %q | task import", body)
 	out, err := exec.Command("bash", "-c", cmd).Output()
-	log.Fatal(errors.Wrapf(err, "doImport [%v] out:%q", cmd, out))
+	if err != nil {
+		log.Fatal(errors.Wrapf(err, "doImport [%v] out:%q", cmd, out))
+	}
 }
 
 func parseUuids(out bytes.Buffer) ([]string, error) {
