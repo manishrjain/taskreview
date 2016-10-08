@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/fatih/color"
+	"github.com/pkg/errors"
 )
 
 const (
@@ -140,17 +141,75 @@ func printInfo(uuid string, idx, total int) int {
 
 	fmt.Println(`
 	Press ENTER to mark reviewed, s to skip
-	Press r for red task, b for blue task, g for green task
+	Press e to edit description
+	Press t to edit tags
+	Press a to edit assigned
 	Press w to toggle _WaitingFor
 	Press d to set project:Development, t to set project:Technical
 	Press b to go back to the last task
+	Press q to quit
 	`)
 	r := make([]byte, 1)
 	os.Stdin.Read(r)
 	if r[0] == 'b' {
 		return -1
 	}
+
+	if r[0] == 'q' {
+		os.Exit(0)
+	}
+
+	// Edit description.
+	if r[0] == 'e' {
+		return editDescription(task)
+	}
+
+	// Edit tags.
+	if r[0] == 't' {
+		fmt.Printf("Press g for green, b for blue, r for red ")
+		os.Stdin.Read(r)
+		rem = append(rem, user)
+		if r[0] == 'g' {
+			rem = append(rem, "green")
+		} else if r[0] == 'b' {
+			rem = append(rem, "blue")
+		} else if r[0] == 'r' {
+			rem = append(rem, "red")
+		} else {
+			return 0
+		}
+		task.Tags = rem
+		doImport(task)
+		return 0
+	}
 	return 1
+}
+
+func editDescription(t task) int {
+	lineInputMode()
+	defer singleCharMode()
+
+	reader := bufio.NewReader(os.Stdin)
+	fmt.Printf("Enter description: ")
+	desc, err := reader.ReadString('\n')
+	if err != nil {
+		log.Fatal(err)
+	}
+	t.Description = strings.Trim(desc, " \n")
+	doImport(t)
+	return 0
+}
+
+// doImport imports the task and returns it's UUID and error.
+func doImport(t task) {
+	body, err := json.Marshal(t)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	cmd := fmt.Sprintf("echo -n %q | task import", body)
+	out, err := exec.Command("bash", "-c", cmd).Output()
+	log.Fatal(errors.Wrapf(err, "doImport [%v] out:%q", cmd, out))
 }
 
 func parseUuids(out bytes.Buffer) ([]string, error) {
@@ -202,12 +261,20 @@ func getCompletedTasks() ([]string, error) {
 	return uuids, nil
 }
 
-func main() {
+func singleCharMode() {
 	// disable input buffering
 	exec.Command("stty", "-F", "/dev/tty", "cbreak", "min", "1").Run()
 	// do not display entered characters on the screen
 	exec.Command("stty", "-F", "/dev/tty", "-echo").Run()
+}
 
+func lineInputMode() {
+	exec.Command("stty", "-F", "/dev/tty", "cooked").Run()
+	exec.Command("stty", "-F", "/dev/tty", "echo").Run()
+}
+
+func main() {
+	singleCharMode()
 	uuids, err := getCompletedTasks()
 	if err != nil {
 		log.Fatal(err)
