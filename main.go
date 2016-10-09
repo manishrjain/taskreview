@@ -49,6 +49,7 @@ type task struct {
 	Tags        []string `json:"tags,omitempty"`
 	Uuid        string   `json:"uuid,omitempty"`
 	Xid         string   `json:"xid,omitempty"`
+	Reviewed    string   `json:"reviewed,omitempty"`
 }
 
 func age(dur time.Duration) string {
@@ -69,7 +70,7 @@ func age(dur time.Duration) string {
 	return res
 }
 
-func printSummary(uuid string, idx, total int) (task, []string) {
+func getTask(uuid string) task {
 	cmd := exec.Command("task", uuid, "export")
 	var out bytes.Buffer
 	cmd.Stdout = &out
@@ -86,12 +87,14 @@ func printSummary(uuid string, idx, total int) (task, []string) {
 		log.Fatalf("Expected exactly one task for: %v", uuid)
 	}
 	task := tasks[0]
+	return task
+}
 
+func printSummary(tk task, idx, total int) {
 	var user, ptag string
 	pomo := color.New(color.BgBlack, color.FgWhite).PrintfFunc()
 
-	rem := make([]string, 0, 10)
-	for _, tag := range task.Tags {
+	for _, tag := range tk.Tags {
 		switch {
 		case tag == "green":
 			ptag = tag
@@ -105,21 +108,47 @@ func printSummary(uuid string, idx, total int) (task, []string) {
 		case strings.HasPrefix(tag, "@"):
 			user = tag
 		default:
-			rem = append(rem, tag)
+			// pass
 		}
 	}
 
 	color.New(color.BgRed, color.FgWhite).Printf(" [%2d of %2d] ", idx, total)
 	color.New(color.BgYellow, color.FgBlack).Printf(" %13s ", user)
-	color.New(color.BgCyan).Printf(" %12s ", task.Project)
-	desc := task.Description
+	color.New(color.BgCyan).Printf(" %12s ", tk.Project)
+	desc := tk.Description
 	if len(desc) > 60 {
 		desc = desc[:60]
 	}
 	color.New(color.BgWhite, color.FgBlack).Printf(" %-60s", desc)
 	pomo(" %-10v ", ptag)
 	fmt.Println()
-	return task, rem
+}
+
+var taskHelp = map[rune]string{
+	'e': "edit description",
+	'a': "edit assigned",
+	'p': "edit project",
+	'c': "edit color",
+	't': "edit tags",
+	'r': "mark reviewed",
+	'b': "go back",
+	'q': "quit",
+}
+
+func isNormalTag(t string) bool {
+	if len(t) == 0 {
+		return false
+	}
+	if t[0] >= 'A' && t[0] <= 'Z' {
+		return false
+	}
+	if t[0] == '@' || t[0] == '-' {
+		return false
+	}
+	if t == "red" || t == "green" || t == "blue" || t == "black" {
+		return false
+	}
+	return true
 }
 
 // Returns back how much to move the index by.
@@ -130,7 +159,8 @@ func printInfo(uuid string, idx, total int) int {
 	cmd.Run()
 
 	fmt.Println()
-	task, rem := printSummary(uuid, idx, total)
+	task := getTask(uuid)
+	printSummary(task, idx, total)
 
 	started, err := time.Parse(stamp, task.Created)
 	if err != nil {
@@ -144,8 +174,17 @@ func printInfo(uuid string, idx, total int) int {
 		}
 	}
 	fmt.Println()
+	if len(task.Description) > 60 {
+		fmt.Printf("Description:  %s\n", task.Description)
+	}
 	fmt.Printf("Tags:        ")
-	for i, t := range rem {
+	ntags := make([]string, 0, 10)
+	for _, t := range task.Tags {
+		if isNormalTag(t) {
+			ntags = append(ntags, t)
+		}
+	}
+	for i, t := range ntags {
 		color.New(color.FgRed+color.Attribute(i)).Printf(" %s", t)
 	}
 	fmt.Println()
@@ -157,42 +196,30 @@ func printInfo(uuid string, idx, total int) int {
 	fmt.Printf("UUID:         %s\n", task.Uuid)
 	fmt.Println()
 
-	fmt.Println(`
-	Press e to edit description
-	Press t to edit tags
-	Press a to edit assigned
-	Press ENTER to mark reviewed, s to skip
-
-	Press w to toggle _WaitingFor
-	Press d to set project:Development, t to set project:Technical
-	Press b to go back to the last task
-
-	Press q to quit
-	`)
+	printOptions(taskHelp)
 	r := make([]byte, 1)
 	os.Stdin.Read(r)
-	if r[0] == 'b' {
+
+	switch r[0] {
+	case 'b':
 		return -1
-	}
-
-	if r[0] == 'q' {
+	case 'q':
 		return total
-	}
-
-	// Edit description.
-	if r[0] == 'e' {
+	case 'e':
 		return editDescription(task)
-	}
-
-	if r[0] == 'a' {
+	case 'a':
 		return editAssigned(task)
-	}
-
-	// Edit tags.
-	if r[0] == 't' {
+	case 'p':
+		return editProject(task)
+	case 'c':
 		return editTaskColor(task)
+	case 't':
+		return editTags(task)
+	case 'r':
+		return markReviewed(task)
+	default:
+		return 1
 	}
-	return 1
 }
 
 func editDescription(t task) int {
@@ -239,9 +266,15 @@ func printOptions(mp map[rune]string) {
 	fmt.Println()
 }
 
+func showAndGetResponse(label string, m map[rune]string) rune {
+	color.New(color.BgRed, color.FgWhite).Printf(" %s: ", label)
+	printOptions(m)
+	r := make([]byte, 1)
+	os.Stdin.Read(r)
+	return rune(r[0])
+}
+
 func editAssigned(t task) int {
-	color.New(color.BgRed, color.FgWhite).Printf(" Assign To: ")
-	printOptions(assigned)
 	tags := t.Tags[:0]
 	for _, t := range t.Tags {
 		if t[0] != '@' {
@@ -249,9 +282,7 @@ func editAssigned(t task) int {
 		}
 	}
 
-	r := make([]byte, 1)
-	os.Stdin.Read(r)
-	ch := rune(r[0])
+	ch := showAndGetResponse("Assign To", assigned)
 	if a, ok := assigned[ch]; ok {
 		tags = append(tags, a)
 	} else {
@@ -260,6 +291,55 @@ func editAssigned(t task) int {
 	t.Tags = tags
 	doImport(t)
 	return 0
+}
+
+func editProject(t task) int {
+	ch := showAndGetResponse("Project", projects)
+	if p, ok := projects[ch]; ok {
+		t.Project = p
+	} else {
+		return 0
+	}
+	doImport(t)
+	return 0
+}
+
+func editTags(t task) int {
+	m := make(map[rune]string)
+	for _, t := range allTags {
+	CHARS:
+		for i := 0; i < len(t); i++ { // iterate through characters.
+			ch := rune(t[i])
+			if _, has := m[ch]; !has {
+				m[ch] = t
+				break CHARS
+			}
+		}
+	}
+	ch := showAndGetResponse("Tags", m)
+	if tag, ok := m[ch]; ok {
+		newt := t.Tags[:0]
+		found := false
+		for _, prev := range t.Tags {
+			if prev != tag {
+				newt = append(newt, prev)
+			} else {
+				found = true
+			}
+		}
+		if !found {
+			newt = append(newt, tag)
+		}
+		t.Tags = newt
+		doImport(t)
+	}
+	return 0
+}
+
+func markReviewed(t task) int {
+	t.Reviewed = time.Now().UTC().Format(stamp)
+	doImport(t)
+	return 1
 }
 
 var taskColors = map[rune]string{
@@ -312,9 +392,39 @@ func parseUuids(out bytes.Buffer) ([]string, error) {
 	}
 	uuids := make([]string, 0, len(tasks))
 	for _, t := range tasks {
+		if len(t.Completed) > 0 {
+			continue
+		}
 		uuids = append(uuids, t.Uuid)
 	}
 	return uuids, nil
+}
+
+var allTags = make([]string, 0, 30)
+
+func cacheAllTags() {
+	cmd := exec.Command("task", "tags")
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	if err := cmd.Run(); err != nil {
+		log.Fatalf("getAllTags: %v", err)
+	}
+	s := bufio.NewScanner(&out)
+	for s.Scan() {
+		line := s.Text()
+		if len(line) == 0 {
+			continue
+		}
+		t := strings.Split(line, " ")[0]
+
+		if !isNormalTag(t) {
+			continue
+		}
+		if t[0] == '_' {
+			continue
+		}
+		allTags = append(allTags, t)
+	}
 }
 
 func getTasks(filter string) ([]string, error) {
@@ -370,8 +480,30 @@ func lineInputMode() {
 
 func showAndReviewTasks(uuids []string) {
 	fmt.Println()
-	for i := 0; i < len(uuids) && i < 30; i++ {
-		printSummary(uuids[i], i, len(uuids))
+	now := time.Now().UTC()
+	final := uuids[:0]
+
+	for i := 0; i < len(uuids); i++ {
+		tk := getTask(uuids[i])
+		if len(tk.Reviewed) > 0 {
+			rev, err := time.Parse(stamp, tk.Reviewed)
+			if err == nil {
+				if now.Sub(rev) < 24*time.Hour {
+					continue
+				}
+			}
+		}
+		final = append(final, uuids[i])
+	}
+	fmt.Printf("%d tasks already reviewed.\n", len(uuids)-len(final))
+	uuids = final
+
+	for i, uuid := range uuids {
+		if i >= 30 {
+			break
+		}
+		tk := getTask(uuid)
+		printSummary(tk, i, len(uuids))
 	}
 
 	fmt.Println()
@@ -398,22 +530,11 @@ func showAndReviewTasks(uuids []string) {
 }
 
 var help = map[rune]string{
-	'h': "view help",
-	'q': "quit",
-	'c': "clear",
-	'd': "completed tasks",
-	'a': "assigned filter",
-	'p': "project filter",
-}
-
-func printHelp() {
-	fmt.Println(`
-			h : to view this help.
-			q : to quit.
-			c : to clear.
-			d : to view completed tasks.
-			a : to add assigned filter.
-			`)
+	'q': "Quit",
+	'c': "filter Clear",
+	'd': "filter completeD",
+	'a': "filter Assigned",
+	'p': "filter Project",
 }
 
 func clear() {
@@ -436,17 +557,8 @@ func runShell(filter string) string {
 		os.Exit(0)
 	}
 
-	if r[0] == 'h' {
-		printHelp()
-		return filter
-	}
-
 	if r[0] == 'c' {
-		cmd := exec.Command("clear")
-		cmd.Stdout = os.Stdout
-		cmd.Run()
-		printOptions(help)
-		return filter
+		return ""
 	}
 
 	if r[0] == 'd' {
@@ -459,22 +571,14 @@ func runShell(filter string) string {
 	}
 
 	if r[0] == 'a' {
-		color.New(color.BgRed, color.FgWhite).Printf(" Assign To: ")
-		printOptions(assigned)
-
-		os.Stdin.Read(r)
-		ch := rune(r[0])
+		ch := showAndGetResponse("Assign To", assigned)
 		if a, ok := assigned[ch]; ok {
 			return filter + " +" + a
 		}
 	}
 
 	if r[0] == 'p' {
-		color.New(color.BgRed, color.FgWhite).Printf(" Project: ")
-		printOptions(projects)
-
-		os.Stdin.Read(r)
-		ch := rune(r[0])
+		ch := showAndGetResponse("Project", projects)
 		if a, ok := projects[ch]; ok {
 			return filter + " project:" + a
 		}
@@ -495,6 +599,8 @@ func runShell(filter string) string {
 }
 
 func main() {
+	cacheAllTags()
+
 	fmt.Println("Taskreview version 0.1")
 	var filter string
 	singleCharMode()
