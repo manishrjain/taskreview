@@ -69,15 +69,8 @@ func age(dur time.Duration) string {
 	return res
 }
 
-// Returns back how much to move the index by.
-func printInfo(uuid string, idx, total int) int {
-	var cmd *exec.Cmd
-	cmd = exec.Command("clear")
-	cmd.Stdout = os.Stdout
-	cmd.Run()
-	fmt.Println()
-
-	cmd = exec.Command("task", uuid, "export")
+func printSummary(uuid string, idx, total int) (task, []string) {
+	cmd := exec.Command("task", uuid, "export")
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	err := cmd.Run()
@@ -115,26 +108,51 @@ func printInfo(uuid string, idx, total int) int {
 			rem = append(rem, tag)
 		}
 	}
+
+	color.New(color.BgRed, color.FgWhite).Printf(" [%2d of %2d] ", idx, total)
+	color.New(color.BgYellow, color.FgBlack).Printf(" %13s ", user)
+	color.New(color.BgCyan).Printf(" %12s ", task.Project)
+	desc := task.Description
+	if len(desc) > 60 {
+		desc = desc[:60]
+	}
+	color.New(color.BgWhite, color.FgBlack).Printf(" %-60s", desc)
+	pomo(" %-10v ", ptag)
+	fmt.Println()
+	return task, rem
+}
+
+// Returns back how much to move the index by.
+func printInfo(uuid string, idx, total int) int {
+	var cmd *exec.Cmd
+	cmd = exec.Command("clear")
+	cmd.Stdout = os.Stdout
+	cmd.Run()
+
+	fmt.Println()
+	task, rem := printSummary(uuid, idx, total)
+
 	started, err := time.Parse(stamp, task.Created)
 	if err != nil {
 		log.Fatal(err)
 	}
-	finished, err := time.Parse(stamp, task.Completed)
-	if err != nil {
-		log.Fatal(err)
+	finished := time.Now()
+	if len(task.Completed) > 0 {
+		finished, err = time.Parse(stamp, task.Completed)
+		if err != nil {
+			log.Fatal(err)
+		}
 	}
-
-	color.New(color.BgRed, color.FgWhite).Printf(" [%d of %d] ", idx, total)
-	color.New(color.BgYellow, color.FgBlack).Printf(" %7s ", user)
-	color.New(color.BgWhite, color.FgBlack).Printf(" %-60s", task.Description)
-	pomo(" %-10v ", ptag)
 	fmt.Println()
+	fmt.Printf("Tags:        ")
+	for i, t := range rem {
+		color.New(color.FgRed+color.Attribute(i)).Printf(" %s", t)
+	}
 	fmt.Println()
-	fmt.Printf("Project:      ")
-	color.New(color.FgYellow).Printf("%s\n", task.Project)
-	fmt.Printf("Tags:         %s\n", strings.Join(rem, " "))
 	fmt.Printf("Started:      %s\n", started.Format(format))
-	fmt.Printf("Completed:    %s\n", finished.Format(format))
+	if len(task.Completed) > 0 {
+		fmt.Printf("Completed:    %s\n", finished.Format(format))
+	}
 	fmt.Printf("Age:          %v\n", age(finished.Sub(started)))
 	fmt.Printf("UUID:         %s\n", task.Uuid)
 	fmt.Println()
@@ -158,7 +176,7 @@ func printInfo(uuid string, idx, total int) int {
 	}
 
 	if r[0] == 'q' {
-		os.Exit(0)
+		return total
 	}
 
 	// Edit description.
@@ -199,15 +217,26 @@ var assigned = map[rune]string{
 	'j': "@jchiu",
 	'm': "@manish",
 	'p': "@pawan",
+	'o': "@porwaladisha",
+}
+
+var projects = map[rune]string{
+	'd': "Development",
+	't': "Technical",
+	'c': "Company",
+	'l': "Learning",
+	'n': "Design",
 }
 
 func printOptions(mp map[rune]string) {
+	fmt.Println()
 	var i color.Attribute
 	for k, v := range mp {
-		color.New(color.FgRed+i).Printf(" %q for %v ", k, v)
+		color.New(color.FgRed+i).Printf("\t%q: %v\n", k, v)
 		i++
 		i = i % 6
 	}
+	fmt.Println()
 }
 
 func editAssigned(t task) int {
@@ -291,7 +320,9 @@ func parseUuids(out bytes.Buffer) ([]string, error) {
 func getTasks(filter string) ([]string, error) {
 	var cmd *exec.Cmd
 	if len(filter) > 0 {
-		cmd = exec.Command("task", filter, "export")
+		args := strings.Split(filter, " ")
+		args = append(args, "export")
+		cmd = exec.Command("task", args...)
 	} else {
 		cmd = exec.Command("task", "export")
 	}
@@ -337,17 +368,138 @@ func lineInputMode() {
 	exec.Command("stty", "-F", "/dev/tty", "echo").Run()
 }
 
-func main() {
-	singleCharMode()
-	uuids, err := getCompletedTasks()
-	if err != nil {
-		log.Fatal(err)
+func showAndReviewTasks(uuids []string) {
+	fmt.Println()
+	for i := 0; i < len(uuids) && i < 30; i++ {
+		printSummary(uuids[i], i, len(uuids))
 	}
+
+	fmt.Println()
+	if len(uuids) == 0 {
+		fmt.Println("Found 0 tasks.")
+		time.Sleep(3 * time.Second)
+		return
+	}
+
+	fmt.Printf("Found %d tasks. Review (Y/n)? ", len(uuids))
+	b := make([]byte, 1)
+	os.Stdin.Read(b)
+	if b[0] == 'n' {
+		return
+	}
+
 	for i := 0; i < len(uuids); {
 		if i < 0 || i >= len(uuids) {
 			break
 		}
 		uuid := uuids[i]
 		i += printInfo(uuid, i, len(uuids))
+	}
+}
+
+var help = map[rune]string{
+	'h': "view help",
+	'q': "quit",
+	'c': "clear",
+	'd': "completed tasks",
+	'a': "assigned filter",
+	'p': "project filter",
+}
+
+func printHelp() {
+	fmt.Println(`
+			h : to view this help.
+			q : to quit.
+			c : to clear.
+			d : to view completed tasks.
+			a : to add assigned filter.
+			`)
+}
+
+func clear() {
+	cmd := exec.Command("clear")
+	cmd.Stdout = os.Stdout
+	cmd.Run()
+	printOptions(help)
+}
+
+func runShell(filter string) string {
+	clear()
+	color.New(color.BgBlue, color.FgWhite).Printf("\ntask %s>", filter)
+
+	r := make([]byte, 1)
+	if _, err := os.Stdin.Read(r); err != nil {
+		log.Fatal(err)
+	}
+
+	if r[0] == 'q' {
+		os.Exit(0)
+	}
+
+	if r[0] == 'h' {
+		printHelp()
+		return filter
+	}
+
+	if r[0] == 'c' {
+		cmd := exec.Command("clear")
+		cmd.Stdout = os.Stdout
+		cmd.Run()
+		printOptions(help)
+		return filter
+	}
+
+	if r[0] == 'd' {
+		uuids, err := getCompletedTasks()
+		if err != nil {
+			log.Fatal(err)
+		}
+		showAndReviewTasks(uuids)
+		return ""
+	}
+
+	if r[0] == 'a' {
+		color.New(color.BgRed, color.FgWhite).Printf(" Assign To: ")
+		printOptions(assigned)
+
+		os.Stdin.Read(r)
+		ch := rune(r[0])
+		if a, ok := assigned[ch]; ok {
+			return filter + " +" + a
+		}
+	}
+
+	if r[0] == 'p' {
+		color.New(color.BgRed, color.FgWhite).Printf(" Project: ")
+		printOptions(projects)
+
+		os.Stdin.Read(r)
+		ch := rune(r[0])
+		if a, ok := projects[ch]; ok {
+			return filter + " project:" + a
+		}
+	}
+
+	if r[0] == byte(10) { // Enter
+		if len(filter) > 0 {
+			uuids, err := getTasks(filter)
+			if err != nil {
+				log.Fatal(err)
+			}
+			showAndReviewTasks(uuids)
+		}
+		return ""
+	}
+
+	return filter
+}
+
+func main() {
+	fmt.Println("Taskreview version 0.1")
+	var filter string
+	singleCharMode()
+	for {
+		filter = runShell(filter)
+		filter = strings.Trim(filter, " \n")
 	}
 }
