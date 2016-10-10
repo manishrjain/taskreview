@@ -114,7 +114,11 @@ func printSummary(tk task, idx, total int) {
 
 	color.New(color.BgRed, color.FgWhite).Printf(" [%2d of %2d] ", idx, total)
 	color.New(color.BgYellow, color.FgBlack).Printf(" %13s ", user)
-	color.New(color.BgCyan).Printf(" %12s ", tk.Project)
+	if tk.Status == "deleted" {
+		color.New(color.BgRed, color.FgWhite).Printf(" %12s ", "DELETED")
+	} else {
+		color.New(color.BgCyan).Printf(" %12s ", tk.Project)
+	}
 	desc := tk.Description
 	if len(desc) > 60 {
 		desc = desc[:60]
@@ -133,6 +137,7 @@ var taskHelp = map[rune]string{
 	'r': "mark reviewed",
 	'b': "go back",
 	'q': "quit",
+	'x': "delete task",
 }
 
 func isNormalTag(t string) bool {
@@ -217,6 +222,8 @@ func printInfo(tk task, idx, total int) int {
 		return editTags(tk)
 	case 'r':
 		return markReviewed(tk)
+	case 'x':
+		return deleteTask(tk)
 	default:
 		return 1
 	}
@@ -343,6 +350,12 @@ func markReviewed(t task) int {
 	return 1
 }
 
+func deleteTask(t task) int {
+	t.Status = "deleted"
+	doImport(t)
+	return 0
+}
+
 var taskColors = map[rune]string{
 	'r': "red",
 	'b': "blue",
@@ -413,6 +426,7 @@ func cacheAllTags() {
 func getTasks(filter string) ([]task, error) {
 	var cmd *exec.Cmd
 	var completed bool
+	var learning bool
 	if len(filter) > 0 {
 		args := strings.Split(filter, " ")
 		args = append(args, "export")
@@ -420,9 +434,12 @@ func getTasks(filter string) ([]task, error) {
 		for _, arg := range args {
 			if arg == "_end" {
 				completed = true
-			} else {
-				argf = append(argf, arg)
+				continue
 			}
+			if arg == "project:Learning" {
+				learning = true
+			}
+			argf = append(argf, arg)
 		}
 		cmd = exec.Command("task", argf...)
 	} else {
@@ -444,6 +461,11 @@ func getTasks(filter string) ([]task, error) {
 	for _, t := range tasks {
 		if t.Status == "deleted" {
 			continue
+		}
+		if !learning {
+			if t.Project == "Learning" {
+				continue
+			}
 		}
 		var end time.Time
 		if len(t.Completed) > 0 {
