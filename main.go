@@ -125,7 +125,7 @@ func printSummary(tk task, idx, total int) {
 }
 
 var taskHelp = map[rune]string{
-	'e': "edit description",
+	'd': "edit description",
 	'a': "edit assigned",
 	'p': "edit project",
 	'c': "edit color",
@@ -152,34 +152,33 @@ func isNormalTag(t string) bool {
 }
 
 // Returns back how much to move the index by.
-func printInfo(uuid string, idx, total int) int {
+func printInfo(tk task, idx, total int) int {
 	var cmd *exec.Cmd
 	cmd = exec.Command("clear")
 	cmd.Stdout = os.Stdout
 	cmd.Run()
 
 	fmt.Println()
-	task := getTask(uuid)
-	printSummary(task, idx, total)
+	printSummary(tk, idx, total)
 
-	started, err := time.Parse(stamp, task.Created)
+	started, err := time.Parse(stamp, tk.Created)
 	if err != nil {
 		log.Fatal(err)
 	}
 	finished := time.Now()
-	if len(task.Completed) > 0 {
-		finished, err = time.Parse(stamp, task.Completed)
+	if len(tk.Completed) > 0 {
+		finished, err = time.Parse(stamp, tk.Completed)
 		if err != nil {
 			log.Fatal(err)
 		}
 	}
 	fmt.Println()
-	if len(task.Description) > 60 {
-		fmt.Printf("Description:  %s\n", task.Description)
+	if len(tk.Description) > 60 {
+		fmt.Printf("Description:  %s\n", tk.Description)
 	}
 	fmt.Printf("Tags:        ")
 	ntags := make([]string, 0, 10)
-	for _, t := range task.Tags {
+	for _, t := range tk.Tags {
 		if isNormalTag(t) {
 			ntags = append(ntags, t)
 		}
@@ -189,11 +188,12 @@ func printInfo(uuid string, idx, total int) int {
 	}
 	fmt.Println()
 	fmt.Printf("Started:      %s\n", started.Format(format))
-	if len(task.Completed) > 0 {
-		fmt.Printf("Completed:    %s\n", finished.Format(format))
+	if len(tk.Completed) > 0 {
+		now := time.Now().UTC()
+		fmt.Printf("Completed:    %s [%vago]\n", finished.Format(format), age(now.Sub(finished)))
 	}
 	fmt.Printf("Age:          %v\n", age(finished.Sub(started)))
-	fmt.Printf("UUID:         %s\n", task.Uuid)
+	fmt.Printf("UUID:         %s\n", tk.Uuid)
 	fmt.Println()
 
 	printOptions(taskHelp)
@@ -205,18 +205,18 @@ func printInfo(uuid string, idx, total int) int {
 		return -1
 	case 'q':
 		return total
-	case 'e':
-		return editDescription(task)
+	case 'd':
+		return editDescription(tk)
 	case 'a':
-		return editAssigned(task)
+		return editAssigned(tk)
 	case 'p':
-		return editProject(task)
+		return editProject(tk)
 	case 'c':
-		return editTaskColor(task)
+		return editTaskColor(tk)
 	case 't':
-		return editTags(task)
+		return editTags(tk)
 	case 'r':
-		return markReviewed(task)
+		return markReviewed(tk)
 	default:
 		return 1
 	}
@@ -259,7 +259,8 @@ func printOptions(mp map[rune]string) {
 	fmt.Println()
 	var i color.Attribute
 	for k, v := range mp {
-		color.New(color.FgRed+i).Printf("\t%q: %v\n", k, v)
+		// color.New(color.FgRed+i).Printf("\t%q: %v\n", k, v)
+		fmt.Printf("\t%q: %v\n", k, v)
 		i++
 		i = i % 6
 	}
@@ -385,21 +386,6 @@ func doImport(t task) {
 	}
 }
 
-func parseUuids(out bytes.Buffer) ([]string, error) {
-	var tasks []task
-	if err := json.Unmarshal(out.Bytes(), &tasks); err != nil {
-		return nil, err
-	}
-	uuids := make([]string, 0, len(tasks))
-	for _, t := range tasks {
-		if len(t.Completed) > 0 {
-			continue
-		}
-		uuids = append(uuids, t.Uuid)
-	}
-	return uuids, nil
-}
-
 var allTags = make([]string, 0, 30)
 
 func cacheAllTags() {
@@ -427,12 +413,21 @@ func cacheAllTags() {
 	}
 }
 
-func getTasks(filter string) ([]string, error) {
+func getTasks(filter string) ([]task, error) {
 	var cmd *exec.Cmd
+	var completed bool
 	if len(filter) > 0 {
 		args := strings.Split(filter, " ")
 		args = append(args, "export")
-		cmd = exec.Command("task", args...)
+		argf := args[:0]
+		for _, arg := range args {
+			if arg == "_end" {
+				completed = true
+			} else {
+				argf = append(argf, arg)
+			}
+		}
+		cmd = exec.Command("task", argf...)
 	} else {
 		cmd = exec.Command("task", "export")
 	}
@@ -443,27 +438,35 @@ func getTasks(filter string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	return parseUuids(out)
-}
 
-func getCompletedTasks() ([]string, error) {
-	cmd := exec.Command("task", "completed", "end.after:today-1wk")
-	var out bytes.Buffer
-	cmd.Stdout = &out
-	err := cmd.Run()
-	if err != nil {
-		return nil, err
-	}
-	s := bufio.NewScanner(&out)
-	uuids := make([]string, 0, 10)
-	for s.Scan() {
-		uuid := uuidExp.FindString(s.Text())
-		if len(uuid) == 0 {
+	var tasks []task
+	err = json.Unmarshal(out.Bytes(), &tasks)
+	final := tasks[:0]
+	now := time.Now().UTC()
+
+	for _, t := range tasks {
+		if t.Status == "deleted" {
 			continue
 		}
-		uuids = append(uuids, uuid)
+		var end time.Time
+		if len(t.Completed) > 0 {
+			end, err = time.Parse(stamp, t.Completed)
+			if err != nil {
+				return tasks, err
+			}
+		}
+
+		if completed {
+			if now.Sub(end) < 7*24*time.Hour {
+				final = append(final, t)
+			}
+		} else {
+			if end.IsZero() {
+				final = append(final, t)
+			}
+		}
 	}
-	return uuids, nil
+	return final, err
 }
 
 func singleCharMode() {
@@ -478,13 +481,12 @@ func lineInputMode() {
 	exec.Command("stty", "-F", "/dev/tty", "echo").Run()
 }
 
-func showAndReviewTasks(uuids []string) {
+func showAndReviewTasks(tasks []task) {
 	fmt.Println()
 	now := time.Now().UTC()
-	final := uuids[:0]
+	final := tasks[:0]
 
-	for i := 0; i < len(uuids); i++ {
-		tk := getTask(uuids[i])
+	for _, tk := range tasks {
 		if len(tk.Reviewed) > 0 {
 			rev, err := time.Parse(stamp, tk.Reviewed)
 			if err == nil {
@@ -493,39 +495,41 @@ func showAndReviewTasks(uuids []string) {
 				}
 			}
 		}
-		final = append(final, uuids[i])
+		final = append(final, tk)
 	}
-	fmt.Printf("%d tasks already reviewed.\n", len(uuids)-len(final))
-	uuids = final
+	fmt.Printf("%d tasks already reviewed.\n", len(tasks)-len(final))
+	tasks = final
 
-	for i, uuid := range uuids {
+	for i, tk := range tasks {
 		if i >= 30 {
 			break
 		}
-		tk := getTask(uuid)
-		printSummary(tk, i, len(uuids))
+		printSummary(tk, i, len(tasks))
 	}
 
 	fmt.Println()
-	if len(uuids) == 0 {
+	if len(tasks) == 0 {
 		fmt.Println("Found 0 tasks.")
-		time.Sleep(3 * time.Second)
+		r := make([]byte, 1)
+		os.Stdin.Read(r)
 		return
 	}
 
-	fmt.Printf("Found %d tasks. Review (Y/n)? ", len(uuids))
+	fmt.Printf("Found %d tasks. Review (Y/n)? ", len(tasks))
 	b := make([]byte, 1)
 	os.Stdin.Read(b)
 	if b[0] == 'n' {
 		return
 	}
 
-	for i := 0; i < len(uuids); {
-		if i < 0 || i >= len(uuids) {
+	for i := 0; i < len(tasks); {
+		if i < 0 || i >= len(tasks) {
 			break
 		}
-		uuid := uuids[i]
-		i += printInfo(uuid, i, len(uuids))
+		tk := tasks[i]
+		move := printInfo(tk, i, len(tasks))
+		tasks[i] = getTask(tk.Uuid) // refresh.
+		i += move
 	}
 }
 
@@ -562,12 +566,7 @@ func runShell(filter string) string {
 	}
 
 	if r[0] == 'd' {
-		uuids, err := getCompletedTasks()
-		if err != nil {
-			log.Fatal(err)
-		}
-		showAndReviewTasks(uuids)
-		return ""
+		return filter + " _end"
 	}
 
 	if r[0] == 'a' {
