@@ -406,9 +406,6 @@ func cacheAllTags() {
 		if !isNormalTag(t) {
 			continue
 		}
-		if t[0] == '_' {
-			continue
-		}
 		allTags = append(allTags, t)
 	}
 }
