@@ -246,14 +246,6 @@ func editDescription(t task) int {
 	return 0
 }
 
-var assigned = map[rune]string{
-	'a': "@ashwin",
-	'j': "@jchiu",
-	'm': "@manish",
-	'p': "@pawan",
-	'o': "@porwaladisha",
-}
-
 var projects = map[rune]string{
 	'd': "Development",
 	't': "Technical",
@@ -385,7 +377,7 @@ func editTaskColor(t task) int {
 	return 0
 }
 
-// doImport imports the task and returns it's UUID and error.
+// doImport imports the task.
 func doImport(t task) {
 	body, err := json.Marshal(t)
 	if err != nil {
@@ -399,28 +391,50 @@ func doImport(t task) {
 	}
 }
 
+var assigned = make(map[rune]string)
 var allTags = make([]string, 0, 30)
 
-func cacheAllTags() {
-	cmd := exec.Command("task", "tags")
-	var out bytes.Buffer
-	cmd.Stdout = &out
-	if err := cmd.Run(); err != nil {
-		log.Fatalf("getAllTags: %v", err)
-	}
-	s := bufio.NewScanner(&out)
-	for s.Scan() {
-		line := s.Text()
-		if len(line) == 0 {
-			continue
+func createMappingForAssigned(m map[rune]string, tags []string) {
+	for _, t := range tags {
+	CHARS:
+		for i := 1; i < len(t); i++ { // iterate through characters.
+			ch := rune(t[i])
+			if _, has := m[ch]; !has {
+				m[ch] = t
+				break CHARS
+			}
 		}
-		t := strings.Split(line, " ")[0]
+	}
+}
 
-		if !isNormalTag(t) {
+func cacheAllTags() {
+	tasks, err := getTasks("")
+	if err != nil {
+		log.Fatal(err)
+	}
+	tags := make(map[string]bool)
+	for _, t := range tasks {
+		if len(t.Completed) > 0 || t.Status == "deleted" {
 			continue
 		}
-		allTags = append(allTags, t)
+		for _, tg := range t.Tags {
+			tags[tg] = true
+		}
 	}
+
+	userTags := make([]string, 0, 10)
+	for t := range tags {
+		if len(t) == 0 {
+			continue
+		}
+
+		if isNormalTag(t) {
+			allTags = append(allTags, t)
+		} else if t[0] == '@' {
+			userTags = append(userTags, t)
+		}
+	}
+	createMappingForAssigned(assigned, userTags)
 }
 
 func getTasks(filter string) ([]task, error) {
@@ -528,7 +542,7 @@ func showAndReviewTasks(tasks []task) {
 
 	fmt.Println()
 	if len(tasks) == 0 {
-		fmt.Println("Found 0 tasks.")
+		fmt.Println("Found 0 tasks. Press anything to continue.")
 		r := make([]byte, 1)
 		os.Stdin.Read(r)
 		return
@@ -537,7 +551,7 @@ func showAndReviewTasks(tasks []task) {
 	fmt.Printf("Found %d tasks. Review (Y/n)? ", len(tasks))
 	b := make([]byte, 1)
 	os.Stdin.Read(b)
-	if b[0] == 'n' {
+	if b[0] == 'n' || b[0] == 'q' {
 		return
 	}
 
@@ -558,6 +572,7 @@ var help = map[rune]string{
 	'd': "filter completeD",
 	'a': "filter Assigned",
 	'p': "filter Project",
+	'n': "new task",
 }
 
 func clear() {
@@ -602,6 +617,44 @@ func runShell(filter string) string {
 		}
 	}
 
+	if r[0] == 'n' {
+		args := strings.Split(filter, " ")
+		var project, user string
+		for _, arg := range args {
+			if strings.HasPrefix(arg, "project:") {
+				project = arg[8:]
+			}
+			if strings.HasPrefix(arg, "+@") {
+				user = arg[1:]
+			}
+		}
+		for len(project) == 0 {
+			ch := showAndGetResponse("Project", projects)
+			if a, ok := projects[ch]; ok {
+				project = a
+			}
+		}
+		for len(user) == 0 {
+			ch := showAndGetResponse("Assign To", assigned)
+			if a, ok := assigned[ch]; ok {
+				user = a
+			}
+		}
+
+		tags := []string{user, "green"}
+		t := task{
+			Project: project,
+			Status:  "pending",
+			Tags:    tags,
+		}
+		fmt.Println()
+		editDescription(t)
+		fmt.Println("Created task. Press anything to continue.")
+		r := make([]byte, 1)
+		os.Stdin.Read(r)
+		return filter
+	}
+
 	if r[0] == byte(10) { // Enter
 		if len(filter) > 0 {
 			uuids, err := getTasks(filter)
@@ -610,7 +663,7 @@ func runShell(filter string) string {
 			}
 			showAndReviewTasks(uuids)
 		}
-		return ""
+		return filter
 	}
 
 	return filter
