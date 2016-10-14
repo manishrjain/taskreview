@@ -129,7 +129,7 @@ func printSummary(tk task, idx, total int) {
 }
 
 var taskHelp = map[rune]string{
-	'd': "edit description",
+	'e': "edit description",
 	'a': "edit assigned",
 	'p': "edit project",
 	'c': "edit color",
@@ -138,6 +138,7 @@ var taskHelp = map[rune]string{
 	'b': "go back",
 	'q': "quit",
 	'x': "delete task",
+	'd': "mark done",
 }
 
 func isNormalTag(t string) bool {
@@ -210,7 +211,7 @@ func printInfo(tk task, idx, total int) int {
 		return -1
 	case 'q':
 		return total
-	case 'd':
+	case 'e':
 		return editDescription(tk)
 	case 'a':
 		return editAssigned(tk)
@@ -224,6 +225,8 @@ func printInfo(tk task, idx, total int) int {
 		return markReviewed(tk)
 	case 'x':
 		return deleteTask(tk)
+	case 'd':
+		return markDone(tk)
 	default:
 		return 1
 	}
@@ -346,6 +349,12 @@ func deleteTask(t task) int {
 	t.Status = "deleted"
 	doImport(t)
 	return 0
+}
+
+func markDone(t task) int {
+	t.Status = "completed"
+	doImport(t)
+	return 1
 }
 
 var taskColors = map[rune]string{
