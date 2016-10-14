@@ -637,16 +637,20 @@ func runShell(filter string) string {
 				user = arg[1:]
 			}
 		}
-		for len(project) == 0 {
+		if len(project) == 0 {
 			ch := showAndGetResponse("Project", projects)
 			if a, ok := projects[ch]; ok {
 				project = a
+			} else {
+				return filter
 			}
 		}
-		for len(user) == 0 {
+		if len(user) == 0 {
 			ch := showAndGetResponse("Assign To", assigned)
 			if a, ok := assigned[ch]; ok {
 				user = a
+			} else {
+				return filter
 			}
 		}
 
