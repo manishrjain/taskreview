@@ -658,9 +658,6 @@ func runShell(filter string) string {
 		}
 		fmt.Println()
 		editDescription(t)
-		fmt.Println("Created task. Press anything to continue.")
-		r := make([]byte, 1)
-		os.Stdin.Read(r)
 		return filter
 	}
 
