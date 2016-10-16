@@ -409,7 +409,7 @@ func createMappingForAssigned(m map[rune]string, tags []string) {
 	}
 }
 
-func cacheAllTags() {
+func generateMappings() {
 	tasks, err := getTasks("")
 	if err != nil {
 		log.Fatal(err)
@@ -690,7 +690,7 @@ func runShell(filter string) string {
 }
 
 func main() {
-	cacheAllTags()
+	generateMappings()
 
 	fmt.Println("Taskreview version 0.1")
 	var filter string
