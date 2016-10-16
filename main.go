@@ -249,14 +249,6 @@ func editDescription(t task) int {
 	return 0
 }
 
-var projects = map[rune]string{
-	'd': "Development",
-	't': "Technical",
-	'c': "Company",
-	'l': "Learning",
-	'n': "Design",
-}
-
 func printOptions(mp map[rune]string) {
 	fmt.Println()
 	var i color.Attribute
@@ -348,7 +340,7 @@ func markReviewed(t task) int {
 func deleteTask(t task) int {
 	t.Status = "deleted"
 	doImport(t)
-	return 0
+	return 1
 }
 
 func markDone(t task) int {
@@ -402,6 +394,7 @@ func doImport(t task) {
 
 var assigned = make(map[rune]string)
 var allTags = make([]string, 0, 30)
+var projects = make(map[rune]string)
 
 func createMappingForAssigned(m map[rune]string, tags []string) {
 	for _, t := range tags {
@@ -422,12 +415,25 @@ func cacheAllTags() {
 		log.Fatal(err)
 	}
 	tags := make(map[string]bool)
+	allProjects := make(map[string]bool)
 	for _, t := range tasks {
 		if len(t.Completed) > 0 || t.Status == "deleted" {
 			continue
 		}
 		for _, tg := range t.Tags {
 			tags[tg] = true
+		}
+		allProjects[t.Project] = true
+	}
+
+	for p := range allProjects {
+		lp := strings.ToLower(p)
+		for i := 0; i < len(lp); i++ {
+			ch := rune(lp[i])
+			if _, has := projects[ch]; !has {
+				projects[ch] = p
+				break
+			}
 		}
 	}
 
@@ -449,7 +455,6 @@ func cacheAllTags() {
 func getTasks(filter string) ([]task, error) {
 	var cmd *exec.Cmd
 	var completed bool
-	var learning bool
 	if len(filter) > 0 {
 		args := strings.Split(filter, " ")
 		args = append(args, "export")
@@ -458,9 +463,6 @@ func getTasks(filter string) ([]task, error) {
 			if arg == "_end" {
 				completed = true
 				continue
-			}
-			if arg == "project:Learning" {
-				learning = true
 			}
 			argf = append(argf, arg)
 		}
@@ -484,11 +486,6 @@ func getTasks(filter string) ([]task, error) {
 	for _, t := range tasks {
 		if t.Status == "deleted" {
 			continue
-		}
-		if !learning {
-			if t.Project == "Learning" {
-				continue
-			}
 		}
 		var end time.Time
 		if len(t.Completed) > 0 {
@@ -605,7 +602,20 @@ func runShell(filter string) string {
 	}
 
 	if r[0] == 'c' {
-		return ""
+		args := strings.Split(filter, " ")
+		final := args[:0]
+		var found bool
+		for _, arg := range args {
+			if arg != "_end" {
+				final = append(final, arg)
+			} else {
+				found = true
+			}
+		}
+		if !found || len(final) == 0 {
+			return ""
+		}
+		return strings.Join(final, " ")
 	}
 
 	if r[0] == 'd' {
