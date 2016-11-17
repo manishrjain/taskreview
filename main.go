@@ -200,6 +200,7 @@ func printInfo(tk task, idx, total int) int {
 	}
 	fmt.Printf("Age:          %v\n", age(finished.Sub(started)))
 	fmt.Printf("UUID:         %s\n", tk.Uuid)
+	fmt.Printf("XID:          %s\n", tk.Xid)
 	fmt.Println()
 
 	printOptions(taskHelp)
@@ -380,6 +381,33 @@ func editTaskColor(t task) int {
 
 // doImport imports the task.
 func doImport(t task) {
+	if len(t.Uuid) > 0 {
+		// If the task gets externally modified, we'd end up blindly overwriting those changes.
+		// So, run this check first for the mod time, and ensure that it's the same, before importing
+		// the modified task.
+		tasks, err := getTasks(t.Uuid)
+		if err != nil {
+			log.Fatalf("Error %v while retrieving tasks with UUID: %v", err, t.Uuid)
+			return
+		}
+		if len(tasks) > 1 {
+			log.Fatalf("Didn't expect to see more than 1 task with the same UUID: %v", t.Uuid)
+		}
+		if len(tasks) == 1 {
+			prev := tasks[0]
+			if prev.Modified != t.Modified {
+				c := color.New(color.BgRed, color.FgWhite)
+				c.Printf(
+					"Task's mod time has changed [%q -> %q]. Please refresh before updating.",
+					t.Modified, prev.Modified)
+				fmt.Printf("\nPress enter to refresh.\n")
+				r := make([]byte, 1)
+				os.Stdin.Read(r)
+				return
+			}
+		}
+	}
+
 	body, err := json.Marshal(t)
 	if err != nil {
 		log.Fatalf("While importing: %v", err)
