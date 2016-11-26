@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"log"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/fatih/color"
+	"github.com/manishrjain/keys"
 	"github.com/pkg/errors"
 )
 
@@ -26,6 +28,9 @@ var (
 	boldGreen *color.Color
 	boldRed   *color.Color
 	boldBlue  *color.Color
+	config    = flag.String("config", os.Getenv("HOME")+"/.taskreview",
+		"Config path for key persistence.")
+	short *keys.Shortcuts
 )
 
 func init() {
@@ -262,15 +267,17 @@ func printOptions(mp map[rune]string) {
 	fmt.Println()
 }
 
-func showAndGetResponse(label string, m map[rune]string) rune {
-	color.New(color.BgRed, color.FgWhite).Printf(" %s: ", label)
-	printOptions(m)
+func showAndGetResponse(header, label string) rune {
+	color.New(color.BgRed, color.FgWhite).Printf(" %s: ", header)
+	short.Print(label)
 	r := make([]byte, 1)
 	os.Stdin.Read(r)
 	return rune(r[0])
 }
 
 func editAssigned(t task) int {
+	// We'll have to regenerate all the tags to modify the user tag.
+	// Filter out user tag from existing tags.
 	tags := t.Tags[:0]
 	for _, t := range t.Tags {
 		if t[0] != '@' {
@@ -278,9 +285,10 @@ func editAssigned(t task) int {
 		}
 	}
 
-	ch := showAndGetResponse("Assign To", assigned)
-	if a, ok := assigned[ch]; ok {
-		tags = append(tags, a)
+	ch := showAndGetResponse("Assign To", "user")
+	if a, ok := short.MapsTo(ch, "user"); ok {
+		// Now add user tag into all tags.
+		tags = append(tags, "@"+a)
 	} else {
 		return 0
 	}
@@ -290,8 +298,8 @@ func editAssigned(t task) int {
 }
 
 func editProject(t task) int {
-	ch := showAndGetResponse("Project", projects)
-	if p, ok := projects[ch]; ok {
+	ch := showAndGetResponse("Project", "project")
+	if p, ok := short.MapsTo(ch, "project"); ok {
 		t.Project = p
 	} else {
 		return 0
@@ -301,19 +309,8 @@ func editProject(t task) int {
 }
 
 func editTags(t task) int {
-	m := make(map[rune]string)
-	for _, t := range allTags {
-	CHARS:
-		for i := 0; i < len(t); i++ { // iterate through characters.
-			ch := rune(t[i])
-			if _, has := m[ch]; !has {
-				m[ch] = t
-				break CHARS
-			}
-		}
-	}
-	ch := showAndGetResponse("Tags", m)
-	if tag, ok := m[ch]; ok {
+	ch := showAndGetResponse("Tags", "tag")
+	if tag, ok := short.MapsTo(ch, "tag"); ok {
 		newt := t.Tags[:0]
 		found := false
 		for _, prev := range t.Tags {
@@ -420,64 +417,28 @@ func doImport(t task) {
 	}
 }
 
-var assigned = make(map[rune]string)
-var allTags = make([]string, 0, 30)
-var projects = make(map[rune]string)
-
-func createMappingForAssigned(m map[rune]string, tags []string) {
-	for _, t := range tags {
-	CHARS:
-		for i := 1; i < len(t); i++ { // iterate through characters.
-			ch := rune(t[i])
-			if _, has := m[ch]; !has {
-				m[ch] = t
-				break CHARS
-			}
-		}
-	}
-}
-
 func generateMappings() {
 	tasks, err := getTasks("")
 	if err != nil {
 		log.Fatal(err)
 	}
-	tags := make(map[string]bool)
-	allProjects := make(map[string]bool)
-	for _, t := range tasks {
-		if len(t.Completed) > 0 || t.Status == "deleted" {
+	for _, task := range tasks {
+		if len(task.Completed) > 0 || task.Status == "deleted" {
 			continue
 		}
-		for _, tg := range t.Tags {
-			tags[tg] = true
-		}
-		allProjects[t.Project] = true
-	}
-
-	for p := range allProjects {
-		lp := strings.ToLower(p)
-		for i := 0; i < len(lp); i++ {
-			ch := rune(lp[i])
-			if _, has := projects[ch]; !has {
-				projects[ch] = p
-				break
+		short.AutoAssign(task.Project, "project")
+		for _, t := range task.Tags {
+			if len(t) == 0 {
+				continue
 			}
-		}
-	}
 
-	userTags := make([]string, 0, 10)
-	for t := range tags {
-		if len(t) == 0 {
-			continue
-		}
-
-		if isNormalTag(t) {
-			allTags = append(allTags, t)
-		} else if t[0] == '@' {
-			userTags = append(userTags, t)
-		}
+			if isNormalTag(t) {
+				short.AutoAssign(t, "tag")
+			} else if t[0] == '@' {
+				short.AutoAssign(t[1:], "user")
+			}
+		} // end tags
 	}
-	createMappingForAssigned(assigned, userTags)
 }
 
 func getTasks(filter string) ([]task, error) {
@@ -651,15 +612,15 @@ func runShell(filter string) string {
 	}
 
 	if r[0] == 'a' {
-		ch := showAndGetResponse("Assign To", assigned)
-		if a, ok := assigned[ch]; ok {
-			return filter + " +" + a
+		ch := showAndGetResponse("Assign To", "user")
+		if a, ok := short.MapsTo(ch, "user"); ok {
+			return filter + " +@" + a
 		}
 	}
 
 	if r[0] == 'p' {
-		ch := showAndGetResponse("Project", projects)
-		if a, ok := projects[ch]; ok {
+		ch := showAndGetResponse("Project", "project")
+		if a, ok := short.MapsTo(ch, "project"); ok {
 			return filter + " project:" + a
 		}
 	}
@@ -676,16 +637,16 @@ func runShell(filter string) string {
 			}
 		}
 		if len(project) == 0 {
-			ch := showAndGetResponse("Project", projects)
-			if a, ok := projects[ch]; ok {
+			ch := showAndGetResponse("Project", "project")
+			if a, ok := short.MapsTo(ch, "project"); ok {
 				project = a
 			} else {
 				return filter
 			}
 		}
 		if len(user) == 0 {
-			ch := showAndGetResponse("Assign To", assigned)
-			if a, ok := assigned[ch]; ok {
+			ch := showAndGetResponse("Assign To", "user")
+			if a, ok := short.MapsTo(ch, "user"); ok {
 				user = a
 			} else {
 				return filter
@@ -718,7 +679,9 @@ func runShell(filter string) string {
 }
 
 func main() {
+	short = keys.ParseConfig(*config)
 	generateMappings()
+	defer short.Persist(*config)
 
 	fmt.Println("Taskreview version 0.1")
 	var filter string
