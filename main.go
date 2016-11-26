@@ -133,19 +133,6 @@ func printSummary(tk task, idx, total int) {
 	fmt.Println()
 }
 
-var taskHelp = map[rune]string{
-	'e': "edit description",
-	'a': "edit assigned",
-	'p': "edit project",
-	'c': "edit color",
-	't': "edit tags",
-	'r': "mark reviewed",
-	'b': "go back",
-	'q': "quit",
-	'x': "delete task",
-	'd': "mark done",
-}
-
 func isNormalTag(t string) bool {
 	if len(t) == 0 {
 		return false
@@ -208,30 +195,31 @@ func printInfo(tk task, idx, total int) int {
 	fmt.Printf("XID:          %s\n", tk.Xid)
 	fmt.Println()
 
-	printOptions(taskHelp)
+	short.Print("task", true)
 	r := make([]byte, 1)
 	os.Stdin.Read(r)
 
-	switch r[0] {
-	case 'b':
+	ins, _ := short.MapsTo(rune(r[0]), "task")
+	switch ins {
+	case "back":
 		return -1
-	case 'q':
+	case "quit":
 		return total
-	case 'e':
+	case "description":
 		return editDescription(tk)
-	case 'a':
+	case "assigned":
 		return editAssigned(tk)
-	case 'p':
+	case "project":
 		return editProject(tk)
-	case 'c':
+	case "color":
 		return editTaskColor(tk)
-	case 't':
+	case "tags":
 		return editTags(tk)
-	case 'r':
+	case "reviewed":
 		return markReviewed(tk)
-	case 'x':
+	case "delete":
 		return deleteTask(tk)
-	case 'd':
+	case "done":
 		return markDone(tk)
 	default:
 		return 1
@@ -255,21 +243,9 @@ func editDescription(t task) int {
 	return 0
 }
 
-func printOptions(mp map[rune]string) {
-	fmt.Println()
-	var i color.Attribute
-	for k, v := range mp {
-		// color.New(color.FgRed+i).Printf("\t%q: %v\n", k, v)
-		fmt.Printf("\t%q: %v\n", k, v)
-		i++
-		i = i % 6
-	}
-	fmt.Println()
-}
-
 func showAndGetResponse(header, label string) rune {
 	color.New(color.BgRed, color.FgWhite).Printf(" %s: ", header)
-	short.Print(label)
+	short.Print(label, false)
 	r := make([]byte, 1)
 	os.Stdin.Read(r)
 	return rune(r[0])
@@ -347,15 +323,7 @@ func markDone(t task) int {
 	return 1
 }
 
-var taskColors = map[rune]string{
-	'r': "red",
-	'b': "blue",
-	'g': "green",
-}
-
 func editTaskColor(t task) int {
-	color.New(color.BgRed, color.FgWhite).Printf(" Set Task Color: ")
-	printOptions(taskColors)
 	tags := t.Tags[:0]
 	for _, tag := range t.Tags {
 		if tag != "red" && tag != "green" && tag != "blue" {
@@ -363,10 +331,8 @@ func editTaskColor(t task) int {
 		}
 	}
 
-	r := make([]byte, 1)
-	os.Stdin.Read(r)
-	ch := rune(r[0])
-	if a, ok := taskColors[ch]; ok {
+	ch := showAndGetResponse("Task Color", "color")
+	if a, ok := short.MapsTo(ch, "color"); ok {
 		tags = append(tags, a)
 	} else {
 		return 0
@@ -414,30 +380,6 @@ func doImport(t task) {
 	out, err := exec.Command("bash", "-c", cmd).Output()
 	if err != nil {
 		log.Fatal(errors.Wrapf(err, "doImport [%v] out:%q", cmd, out))
-	}
-}
-
-func generateMappings() {
-	tasks, err := getTasks("")
-	if err != nil {
-		log.Fatal(err)
-	}
-	for _, task := range tasks {
-		if len(task.Completed) > 0 || task.Status == "deleted" {
-			continue
-		}
-		short.AutoAssign(task.Project, "project")
-		for _, t := range task.Tags {
-			if len(t) == 0 {
-				continue
-			}
-
-			if isNormalTag(t) {
-				short.AutoAssign(t, "tag")
-			} else if t[0] == '@' {
-				short.AutoAssign(t[1:], "user")
-			}
-		} // end tags
 	}
 }
 
@@ -561,20 +503,11 @@ func showAndReviewTasks(tasks []task) {
 	}
 }
 
-var help = map[rune]string{
-	'q': "Quit",
-	'c': "filter Clear",
-	'd': "filter completeD",
-	'a': "filter Assigned",
-	'p': "filter Project",
-	'n': "new task",
-}
-
 func clear() {
 	cmd := exec.Command("clear")
 	cmd.Stdout = os.Stdout
 	cmd.Run()
-	printOptions(help)
+	short.Print("help", true)
 }
 
 func runShell(filter string) string {
@@ -676,6 +609,52 @@ func runShell(filter string) string {
 	}
 
 	return filter
+}
+
+func generateMappings() {
+	tasks, err := getTasks("")
+	if err != nil {
+		log.Fatal(err)
+	}
+	for _, task := range tasks {
+		if len(task.Completed) > 0 || task.Status == "deleted" {
+			continue
+		}
+		short.AutoAssign(task.Project, "project")
+		for _, t := range task.Tags {
+			if len(t) == 0 {
+				continue
+			}
+
+			if isNormalTag(t) {
+				short.AutoAssign(t, "tag")
+			} else if t[0] == '@' {
+				short.AutoAssign(t[1:], "user")
+			}
+		} // end tags
+	}
+
+	short.BestEffortAssign('r', "red", "color")
+	short.BestEffortAssign('b', "blue", "color")
+	short.BestEffortAssign('g', "green", "color")
+
+	short.BestEffortAssign('q', "Quit", "help")
+	short.BestEffortAssign('c', "Clear", "help")
+	short.BestEffortAssign('d', "completed", "help")
+	short.BestEffortAssign('a', "Assigned", "help")
+	short.BestEffortAssign('p', "Project", "help")
+	short.BestEffortAssign('n', "new task", "help")
+
+	short.BestEffortAssign('e', "description", "task")
+	short.BestEffortAssign('a', "assigned", "task")
+	short.BestEffortAssign('p', "project", "task")
+	short.BestEffortAssign('c', "color", "task")
+	short.BestEffortAssign('t', "tags", "task")
+	short.BestEffortAssign('r', "reviewed", "task")
+	short.BestEffortAssign('b', "back", "task")
+	short.BestEffortAssign('q', "quit", "task")
+	short.BestEffortAssign('x', "delete", "task")
+	short.BestEffortAssign('d', "done", "task")
 }
 
 func main() {
