@@ -244,7 +244,9 @@ func editDescription(t task) int {
 }
 
 func showAndGetResponse(header, label string) rune {
-	color.New(color.BgRed, color.FgWhite).Printf(" %s: ", header)
+	if len(header) > 0 {
+		color.New(color.BgRed, color.FgWhite).Printf(" %s: ", header)
+	}
 	short.Print(label, false)
 	r := make([]byte, 1)
 	os.Stdin.Read(r)
@@ -512,18 +514,27 @@ func clear() {
 
 func runShell(filter string) string {
 	clear()
-	color.New(color.BgBlue, color.FgWhite).Printf("\ntask %s>", filter)
+	fmt.Println()
+	color.New(color.BgBlue, color.FgWhite).Printf("task %s>", filter)
 
 	r := make([]byte, 1)
-	if _, err := os.Stdin.Read(r); err != nil {
-		log.Fatal(err)
+	os.Stdin.Read(r)
+	if r[0] == 10 { // Enter
+		if len(filter) > 0 {
+			uuids, err := getTasks(filter)
+			if err != nil {
+				log.Fatal(err)
+			}
+			showAndReviewTasks(uuids)
+		}
+		return filter
 	}
 
-	if r[0] == 'q' {
-		os.Exit(0)
-	}
-
-	if r[0] == 'c' {
+	ins, _ := short.MapsTo(rune(r[0]), "help")
+	switch ins {
+	case "quit":
+		return "-1"
+	case "clear":
 		args := strings.Split(filter, " ")
 		final := args[:0]
 		var found bool
@@ -538,27 +549,22 @@ func runShell(filter string) string {
 			return ""
 		}
 		return strings.Join(final, " ")
-	}
-
-	if r[0] == 'd' {
+	case "completed":
+		if strings.Index(filter, " _end") >= 0 {
+			return filter
+		}
 		return filter + " _end"
-	}
-
-	if r[0] == 'a' {
+	case "assigned":
 		ch := showAndGetResponse("Assign To", "user")
 		if a, ok := short.MapsTo(ch, "user"); ok {
 			return filter + " +@" + a
 		}
-	}
-
-	if r[0] == 'p' {
+	case "project":
 		ch := showAndGetResponse("Project", "project")
 		if a, ok := short.MapsTo(ch, "project"); ok {
 			return filter + " project:" + a
 		}
-	}
-
-	if r[0] == 'n' {
+	case "new":
 		args := strings.Split(filter, " ")
 		var project, user string
 		for _, arg := range args {
@@ -595,19 +601,9 @@ func runShell(filter string) string {
 		fmt.Println()
 		editDescription(t)
 		return filter
-	}
-
-	if r[0] == byte(10) { // Enter
-		if len(filter) > 0 {
-			uuids, err := getTasks(filter)
-			if err != nil {
-				log.Fatal(err)
-			}
-			showAndReviewTasks(uuids)
-		}
+	default:
 		return filter
 	}
-
 	return filter
 }
 
@@ -638,12 +634,12 @@ func generateMappings() {
 	short.BestEffortAssign('b', "blue", "color")
 	short.BestEffortAssign('g', "green", "color")
 
-	short.BestEffortAssign('q', "Quit", "help")
-	short.BestEffortAssign('c', "Clear", "help")
+	short.BestEffortAssign('q', "quit", "help")
+	short.BestEffortAssign('c', "clear", "help")
 	short.BestEffortAssign('d', "completed", "help")
-	short.BestEffortAssign('a', "Assigned", "help")
-	short.BestEffortAssign('p', "Project", "help")
-	short.BestEffortAssign('n', "new task", "help")
+	short.BestEffortAssign('a', "assigned", "help")
+	short.BestEffortAssign('p', "project", "help")
+	short.BestEffortAssign('n', "new", "help")
 
 	short.BestEffortAssign('e', "description", "task")
 	short.BestEffortAssign('a', "assigned", "task")
@@ -660,13 +656,16 @@ func generateMappings() {
 func main() {
 	short = keys.ParseConfig(*config)
 	generateMappings()
-	defer short.Persist(*config)
 
 	fmt.Println("Taskreview version 0.1")
 	var filter string
 	singleCharMode()
 	for {
 		filter = runShell(filter)
+		if filter == "-1" {
+			break
+		}
 		filter = strings.Trim(filter, " \n")
 	}
+	short.Persist(*config)
 }
