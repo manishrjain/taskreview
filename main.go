@@ -30,7 +30,8 @@ var (
 	boldBlue  *color.Color
 	config    = flag.String("config", os.Getenv("HOME")+"/.taskreview",
 		"Config path for key persistence.")
-	short *keys.Shortcuts
+	cmdfilter = flag.String("f", "", "Filter specified in commandline.")
+	short     *keys.Shortcuts
 )
 
 func init() {
@@ -654,11 +655,12 @@ func generateMappings() {
 }
 
 func main() {
+	flag.Parse()
 	short = keys.ParseConfig(*config)
 	generateMappings()
 
 	fmt.Println("Taskreview version 0.1")
-	var filter string
+	filter := *cmdfilter
 	singleCharMode()
 	for {
 		filter = runShell(filter)
