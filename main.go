@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -56,6 +57,21 @@ type task struct {
 	Uuid        string   `json:"uuid,omitempty"`
 	Xid         string   `json:"xid,omitempty"`
 	Reviewed    string   `json:"reviewed,omitempty"`
+	Urgency     float64  `json:"urgency,omitempty"`
+}
+
+type ByUrgency []task
+
+func (b ByUrgency) Len() int {
+	return len(b)
+}
+
+func (b ByUrgency) Less(i int, j int) bool {
+	return b[i].Urgency > b[j].Urgency
+}
+
+func (b ByUrgency) Swap(i int, j int) {
+	b[i], b[j] = b[j], b[i]
 }
 
 func age(dur time.Duration) string {
@@ -118,7 +134,7 @@ func printSummary(tk task, idx, total int) {
 		}
 	}
 
-	color.New(color.BgRed, color.FgWhite).Printf(" [%2d of %2d] ", idx, total)
+	color.New(color.BgRed, color.FgWhite).Printf(" [%2d of %2d] %5.1f ", idx, total, tk.Urgency)
 	color.New(color.BgYellow, color.FgBlack).Printf(" %13s ", user)
 	if tk.Status == "deleted" {
 		color.New(color.BgRed, color.FgWhite).Printf(" %12s ", "DELETED")
@@ -439,6 +455,7 @@ func getTasks(filter string) ([]task, error) {
 			}
 		}
 	}
+	sort.Sort(ByUrgency(final))
 	return final, err
 }
 
