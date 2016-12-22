@@ -20,8 +20,10 @@ import (
 )
 
 const (
-	stamp  = "20060102T150405Z"
-	format = "2006 Jan 02 Mon"
+	stamp   = "20060102T150405Z"
+	format  = "2006 Jan 02 Mon"
+	URGENCY = 1
+	DATE    = 2
 )
 
 var (
@@ -33,6 +35,7 @@ var (
 		"Config path for key persistence.")
 	cmdfilter = flag.String("f", "", "Filter specified in commandline.")
 	short     *keys.Shortcuts
+	sortBy    = URGENCY
 )
 
 func init() {
@@ -60,18 +63,33 @@ type task struct {
 	Urgency     float64  `json:"urgency,omitempty"`
 }
 
-type ByUrgency []task
-
-func (b ByUrgency) Len() int {
-	return len(b)
+func getSortTime(tk task) time.Time {
+	ts := tk.Completed
+	if len(ts) == 0 {
+		ts = tk.Created
+	}
+	t, err := time.Parse(stamp, ts)
+	if err != nil {
+		log.Fatalf("While trying to parse: %v. Got err: %v", ts, err)
+	}
+	return t
 }
 
-func (b ByUrgency) Less(i int, j int) bool {
-	return b[i].Urgency > b[j].Urgency
-}
+type ByDefined []task
 
-func (b ByUrgency) Swap(i int, j int) {
-	b[i], b[j] = b[j], b[i]
+func (b ByDefined) Len() int          { return len(b) }
+func (b ByDefined) Swap(i int, j int) { b[i], b[j] = b[j], b[i] }
+func (b ByDefined) Less(i int, j int) bool {
+	if sortBy == URGENCY {
+		return b[i].Urgency > b[j].Urgency
+
+	} else if sortBy == DATE {
+		t1 := getSortTime(b[i])
+		t2 := getSortTime(b[j])
+		return t2.Before(t1)
+	}
+	log.Fatalf("Unhandled sortBy case for: %v", sortBy)
+	return true
 }
 
 func age(dur time.Duration) string {
@@ -134,7 +152,14 @@ func printSummary(tk task, idx, total int) {
 		}
 	}
 
-	color.New(color.BgRed, color.FgWhite).Printf(" [%2d of %2d] %5.1f ", idx, total, tk.Urgency)
+	if sortBy == URGENCY {
+		color.New(color.BgRed, color.FgWhite).Printf(" [%2d of %2d] %5.1f ", idx, total, tk.Urgency)
+	} else if sortBy == DATE {
+		color.New(color.BgRed, color.FgWhite).Printf(" [%2d of %2d] %6s ", idx, total, getSortTime(tk).Format("Jan 02"))
+	} else {
+		log.Fatal("Unhandled sortBy")
+	}
+
 	color.New(color.BgYellow, color.FgBlack).Printf(" %13s ", user)
 	if tk.Status == "deleted" {
 		color.New(color.BgRed, color.FgWhite).Printf(" %12s ", "DELETED")
@@ -168,11 +193,7 @@ func isNormalTag(t string) bool {
 
 // Returns back how much to move the index by.
 func printInfo(tk task, idx, total int) int {
-	var cmd *exec.Cmd
-	cmd = exec.Command("clear")
-	cmd.Stdout = os.Stdout
-	cmd.Run()
-
+	clear()
 	fmt.Println()
 	printSummary(tk, idx, total)
 
@@ -455,7 +476,7 @@ func getTasks(filter string) ([]task, error) {
 			}
 		}
 	}
-	sort.Sort(ByUrgency(final))
+	sort.Sort(ByDefined(final))
 	return final, err
 }
 
@@ -469,6 +490,15 @@ func singleCharMode() {
 func lineInputMode() {
 	exec.Command("stty", "-F", "/dev/tty", "cooked").Run()
 	exec.Command("stty", "-F", "/dev/tty", "echo").Run()
+}
+
+func hasColorTag(tk task) bool {
+	for _, t := range tk.Tags {
+		if t == "green" || t == "blue" || t == "red" {
+			return true
+		}
+	}
+	return false
 }
 
 func showAndReviewTasks(tasks []task) {
@@ -490,6 +520,7 @@ func showAndReviewTasks(tasks []task) {
 	fmt.Printf("%d tasks already reviewed.\n", len(tasks)-len(final))
 	tasks = final
 
+SHOW:
 	for i, tk := range tasks {
 		if i >= 30 {
 			break
@@ -505,21 +536,47 @@ func showAndReviewTasks(tasks []task) {
 		return
 	}
 
-	fmt.Printf("Found %d tasks. Review (Y/n)? ", len(tasks))
+	fmt.Printf("Found %d tasks.\n", len(tasks))
+	short.Print("tasks", true)
 	b := make([]byte, 1)
 	os.Stdin.Read(b)
-	if b[0] == 'n' || b[0] == 'q' {
+	if b[0] == 10 { // Enter
 		return
 	}
 
-	for i := 0; i < len(tasks); {
-		if i < 0 || i >= len(tasks) {
-			break
+	ins, _ := short.MapsTo(rune(b[0]), "tasks")
+	switch ins {
+	case "review":
+		for i := 0; i < len(tasks); {
+			if i < 0 || i >= len(tasks) {
+				break
+			}
+			tk := tasks[i]
+			move := printInfo(tk, i, len(tasks))
+			tasks[i] = getTask(tk.Uuid) // refresh.
+			i += move
 		}
-		tk := tasks[i]
-		move := printInfo(tk, i, len(tasks))
-		tasks[i] = getTask(tk.Uuid) // refresh.
-		i += move
+	case "fix":
+		for i := 0; i < len(tasks); i++ {
+			tk := &tasks[i]
+			if !hasColorTag(*tk) {
+				fmt.Printf("Fixing task: %v\n", tk.Description)
+				tk.Tags = append(tk.Tags, "green")
+				doImport(*tk)
+			}
+		}
+		clear()
+		goto SHOW
+	case "sort by urgency":
+		sortBy = URGENCY
+		sort.Sort(ByDefined(tasks))
+		clear()
+		goto SHOW
+	case "sort by date":
+		sortBy = DATE
+		sort.Sort(ByDefined(tasks))
+		clear()
+		goto SHOW
 	}
 }
 
@@ -527,11 +584,12 @@ func clear() {
 	cmd := exec.Command("clear")
 	cmd.Stdout = os.Stdout
 	cmd.Run()
-	short.Print("help", true)
+	fmt.Println()
 }
 
 func runShell(filter string) string {
 	clear()
+	short.Print("help", true)
 	fmt.Println()
 	color.New(color.BgBlue, color.FgWhite).Printf("task %s>", filter)
 
@@ -581,6 +639,11 @@ func runShell(filter string) string {
 		ch := showAndGetResponse("Project", "project")
 		if a, ok := short.MapsTo(ch, "project"); ok {
 			return filter + " project:" + a
+		}
+	case "tag":
+		ch := showAndGetResponse("Tag", "tag")
+		if a, ok := short.MapsTo(ch, "tag"); ok {
+			return filter + " +" + a
 		}
 	case "new":
 		args := strings.Split(filter, " ")
@@ -658,6 +721,7 @@ func generateMappings() {
 	short.BestEffortAssign('a', "assigned", "help")
 	short.BestEffortAssign('p', "project", "help")
 	short.BestEffortAssign('n', "new", "help")
+	short.BestEffortAssign('t', "tag", "help")
 
 	short.BestEffortAssign('e', "description", "task")
 	short.BestEffortAssign('a', "assigned", "task")
@@ -669,6 +733,11 @@ func generateMappings() {
 	short.BestEffortAssign('q', "quit", "task")
 	short.BestEffortAssign('x', "delete", "task")
 	short.BestEffortAssign('d', "done", "task")
+
+	short.BestEffortAssign('f', "fix", "tasks")
+	short.BestEffortAssign('r', "review", "tasks")
+	short.BestEffortAssign('u', "sort by urgency", "tasks")
+	short.BestEffortAssign('d', "sort by date", "tasks")
 }
 
 func main() {
