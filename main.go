@@ -546,6 +546,8 @@ func showAndReviewTasks(orig []task) {
 	}
 	if !showAll {
 		fmt.Printf("%d tasks already reviewed.\n", len(orig)-len(tasks))
+	} else {
+		fmt.Println("Showing all tasks.")
 	}
 
 SHOW:
