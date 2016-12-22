@@ -34,8 +34,11 @@ var (
 	boldBlue  *color.Color
 	config    = flag.String("config", os.Getenv("HOME")+"/.taskreview",
 		"Config path for key persistence.")
+	reviewTag = flag.String("rtag", "r:"+os.Getenv("USER"),
+		"Tag to use for marking tasks as reviewed.")
 	cmdfilter = flag.String("f", "", "Filter specified in commandline.")
 	short     *keys.Shortcuts
+	showAll   bool
 	sortBy    = URGENCY
 )
 
@@ -347,7 +350,13 @@ func editTags(t task) int {
 }
 
 func markReviewed(t task) int {
-	t.Reviewed = time.Now().UTC().Format(stamp)
+	if !isReviewed(t) {
+		if len(t.Completed) == 0 {
+			t.Reviewed = time.Now().UTC().Format(stamp)
+		} else {
+			t.Tags = append(t.Tags, *reviewTag)
+		}
+	}
 	doImport(t)
 	return 1
 }
@@ -502,24 +511,42 @@ func hasColorTag(tk task) bool {
 	return false
 }
 
-func showAndReviewTasks(tasks []task) {
-	fmt.Println()
+func isReviewed(tk task) bool {
 	now := time.Now().UTC()
-	final := tasks[:0]
-
-	for _, tk := range tasks {
+	if len(tk.Completed) == 0 {
+		// Incomplete task. So, only update local version.
 		if len(tk.Reviewed) > 0 {
 			rev, err := time.Parse(stamp, tk.Reviewed)
 			if err == nil {
 				if now.Sub(rev) < 24*time.Hour {
-					continue
+					return true
 				}
 			}
 		}
-		final = append(final, tk)
+	} else {
+		// Task has been completed. So, add a reviewed tag.
+		for _, t := range tk.Tags {
+			if t == *reviewTag {
+				return true
+			}
+		}
 	}
-	fmt.Printf("%d tasks already reviewed.\n", len(tasks)-len(final))
-	tasks = final
+	return false
+}
+
+func showAndReviewTasks(orig []task) {
+	fmt.Println()
+	var tasks []task
+
+	for _, tk := range orig {
+		if !showAll && isReviewed(tk) {
+			continue
+		}
+		tasks = append(tasks, tk)
+	}
+	if !showAll {
+		fmt.Printf("%d tasks already reviewed.\n", len(orig)-len(tasks))
+	}
 
 SHOW:
 	for i, tk := range tasks {
@@ -561,6 +588,8 @@ SHOW:
 			tasks[i] = getTask(tk.Uuid) // refresh.
 			i += move
 		}
+	case "toggle show all":
+		showAll = !showAll
 	case "fix":
 		for i := 0; i < len(tasks); i++ {
 			tk := &tasks[i]
@@ -757,6 +786,7 @@ func generateMappings() {
 	short.BestEffortAssign('d', "done", "task")
 
 	short.BestEffortAssign('f', "fix", "tasks")
+	short.BestEffortAssign('a', "toggle show all", "tasks")
 	short.BestEffortAssign('r', "review", "tasks")
 	short.BestEffortAssign('u', "sort by urgency", "tasks")
 	short.BestEffortAssign('d', "sort by date", "tasks")
