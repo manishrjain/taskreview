@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -544,10 +545,14 @@ SHOW:
 		return
 	}
 
+	var i int
 	ins, _ := short.MapsTo(rune(b[0]), "tasks")
 	switch ins {
+	case "goto":
+		i = getJump()
+		fallthrough
 	case "review":
-		for i := 0; i < len(tasks); {
+		for i < len(tasks) {
 			if i < 0 || i >= len(tasks) {
 				break
 			}
@@ -578,6 +583,23 @@ SHOW:
 		clear()
 		goto SHOW
 	}
+}
+
+func getJump() int {
+	lineInputMode()
+	defer singleCharMode()
+
+	reader := bufio.NewReader(os.Stdin)
+	fmt.Printf("Jump to: ")
+	jump, err := reader.ReadString('\n')
+	if err != nil {
+		log.Fatal(err)
+	}
+	j, err := strconv.Atoi(jump[:len(jump)-1])
+	if err != nil {
+		log.Fatal(err)
+	}
+	return j
 }
 
 func clear() {
@@ -738,6 +760,7 @@ func generateMappings() {
 	short.BestEffortAssign('r', "review", "tasks")
 	short.BestEffortAssign('u', "sort by urgency", "tasks")
 	short.BestEffortAssign('d', "sort by date", "tasks")
+	short.BestEffortAssign('g', "goto", "tasks")
 }
 
 func main() {
