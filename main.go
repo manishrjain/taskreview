@@ -17,14 +17,14 @@ import (
 
 	"github.com/fatih/color"
 	"github.com/manishrjain/keys"
-	"github.com/pkg/errors"
 )
 
 const (
 	stamp   = "20060102T150405Z"
 	format  = "2006 Jan 02 Mon"
-	URGENCY = 1
-	DATE    = 2
+	URGENCY = iota
+	DATE
+	COLOR
 )
 
 var (
@@ -51,49 +51,6 @@ func init() {
 	boldGreen = color.New(color.FgGreen).Add(color.Bold)
 	boldRed = color.New(color.FgRed).Add(color.Bold)
 	boldBlue = color.New(color.FgBlue).Add(color.Bold)
-}
-
-type task struct {
-	Completed   string   `json:"end,omitempty"`
-	Created     string   `json:"entry,omitempty"`
-	Description string   `json:"description,omitempty"`
-	Modified    string   `json:"modified,omitempty"`
-	Project     string   `json:"project,omitempty"`
-	Status      string   `json:"status,omitempty"`
-	Tags        []string `json:"tags,omitempty"`
-	Uuid        string   `json:"uuid,omitempty"`
-	Xid         string   `json:"xid,omitempty"`
-	Reviewed    string   `json:"reviewed,omitempty"`
-	Urgency     float64  `json:"urgency,omitempty"`
-}
-
-func getSortTime(tk task) time.Time {
-	ts := tk.Completed
-	if len(ts) == 0 {
-		ts = tk.Created
-	}
-	t, err := time.Parse(stamp, ts)
-	if err != nil {
-		log.Fatalf("While trying to parse: %v. Got err: %v", ts, err)
-	}
-	return t
-}
-
-type ByDefined []task
-
-func (b ByDefined) Len() int          { return len(b) }
-func (b ByDefined) Swap(i int, j int) { b[i], b[j] = b[j], b[i] }
-func (b ByDefined) Less(i int, j int) bool {
-	if sortBy == URGENCY {
-		return b[i].Urgency > b[j].Urgency
-
-	} else if sortBy == DATE {
-		t1 := getSortTime(b[i])
-		t2 := getSortTime(b[j])
-		return t2.Before(t1)
-	}
-	log.Fatalf("Unhandled sortBy case for: %v", sortBy)
-	return true
 }
 
 func age(dur time.Duration) string {
@@ -135,41 +92,35 @@ func getTask(uuid string) task {
 }
 
 func printSummary(tk task, idx, total int) {
-	var user, ptag string
 	pomo := color.New(color.BgBlack, color.FgWhite).PrintfFunc()
 
-	for _, tag := range tk.Tags {
-		switch {
-		case tag == "green":
-			ptag = tag
-			pomo = color.New(color.BgGreen, color.FgBlack).PrintfFunc()
-		case tag == "red":
-			ptag = tag
-			pomo = color.New(color.BgRed, color.FgWhite).PrintfFunc()
-		case tag == "blue":
-			ptag = tag
-			pomo = color.New(color.BgBlue, color.FgWhite).PrintfFunc()
-		case strings.HasPrefix(tag, "@"):
-			user = tag
-		default:
-			// pass
-		}
+	ptag := tk.colorTag()
+	user := tk.userTag()
+
+	switch ptag {
+	case "green":
+		pomo = color.New(color.BgGreen, color.FgBlack).PrintfFunc()
+	case "red":
+		pomo = color.New(color.BgRed, color.FgWhite).PrintfFunc()
+	case "blue":
+		pomo = color.New(color.BgBlue, color.FgWhite).PrintfFunc()
+	default:
+		// pass
 	}
 
-	if sortBy == URGENCY {
-		color.New(color.BgRed, color.FgWhite).Printf(" [%2d of %2d] %5.1f ", idx, total, tk.Urgency)
-	} else if sortBy == DATE {
-		color.New(color.BgRed, color.FgWhite).Printf(" [%2d of %2d] %6s ", idx, total, getSortTime(tk).Format("Jan 02"))
-	} else {
-		log.Fatal("Unhandled sortBy")
-	}
-
-	color.New(color.BgYellow, color.FgBlack).Printf(" %13s ", user)
+	color.New(color.BgRed, color.FgWhite).Printf(" [%2d of %2d] ", idx, total)
 	if tk.Status == "deleted" {
-		color.New(color.BgRed, color.FgWhite).Printf(" %12s ", "DELETED")
+		color.New(color.BgRed, color.FgWhite).Printf(" X ")
+	} else if tk.isDisputed() {
+		color.New(color.BgRed, color.FgWhite).Printf(" D ")
+	} else if tk.isReviewed() {
+		color.New(color.BgGreen, color.FgBlack).Printf(" R ")
 	} else {
-		color.New(color.BgCyan).Printf(" %12s ", tk.Project)
+		color.New(color.BgBlue, color.FgWhite).Printf(" N ")
 	}
+	color.New(color.BgYellow, color.FgBlack).Printf(" %13s ", user)
+	color.New(color.BgCyan).Printf(" %12s ", tk.Project)
+
 	desc := tk.Description
 	if len(desc) > 60 {
 		desc = desc[:60]
@@ -189,7 +140,7 @@ func isNormalTag(t string) bool {
 	if t[0] == '@' || t[0] == '-' {
 		return false
 	}
-	if t == "red" || t == "green" || t == "blue" || t == "black" {
+	if t == "red" || t == "green" || t == "blue" {
 		return false
 	}
 	return true
@@ -248,41 +199,26 @@ func printInfo(tk task, idx, total int) int {
 	case "quit":
 		return total
 	case "description":
-		return editDescription(tk)
+		return tk.editDescription()
 	case "assigned":
-		return editAssigned(tk)
+		return tk.editAssigned()
 	case "project":
-		return editProject(tk)
+		return tk.editProject()
 	case "color":
-		return editTaskColor(tk)
+		return tk.editTaskColor()
 	case "tags":
-		return editTags(tk)
+		return tk.editTags()
 	case "reviewed":
-		return markReviewed(tk)
+		return tk.markReviewed()
 	case "delete":
-		return deleteTask(tk)
+		return tk.deleteTask()
 	case "done":
-		return markDone(tk)
+		return tk.markDone()
+	case "disputed":
+		return tk.markDisputed()
 	default:
 		return 1
 	}
-}
-
-func editDescription(t task) int {
-	lineInputMode()
-	defer singleCharMode()
-
-	reader := bufio.NewReader(os.Stdin)
-	fmt.Printf("Enter description: ")
-	desc, err := reader.ReadString('\n')
-	if err != nil {
-		log.Fatal(err)
-	}
-	t.Description = strings.Trim(desc, " \n")
-	if len(t.Description) > 0 {
-		doImport(t)
-	}
-	return 0
 }
 
 func showAndGetResponse(header, label string) rune {
@@ -295,154 +231,16 @@ func showAndGetResponse(header, label string) rune {
 	return rune(r[0])
 }
 
-func editAssigned(t task) int {
-	// We'll have to regenerate all the tags to modify the user tag.
-	// Filter out user tag from existing tags.
-	tags := t.Tags[:0]
-	for _, t := range t.Tags {
-		if t[0] != '@' {
-			tags = append(tags, t)
-		}
-	}
-
-	ch := showAndGetResponse("Assign To", "user")
-	if a, ok := short.MapsTo(ch, "user"); ok {
-		// Now add user tag into all tags.
-		tags = append(tags, "@"+a)
-	} else {
-		return 0
-	}
-	t.Tags = tags
-	doImport(t)
-	return 0
-}
-
-func editProject(t task) int {
-	ch := showAndGetResponse("Project", "project")
-	if p, ok := short.MapsTo(ch, "project"); ok {
-		t.Project = p
-	} else {
-		return 0
-	}
-	doImport(t)
-	return 0
-}
-
-func editTags(t task) int {
-	ch := showAndGetResponse("Tags", "tag")
-	if tag, ok := short.MapsTo(ch, "tag"); ok {
-		newt := t.Tags[:0]
-		found := false
-		for _, prev := range t.Tags {
-			if prev != tag {
-				newt = append(newt, prev)
-			} else {
-				found = true
-			}
-		}
-		if !found {
-			newt = append(newt, tag)
-		}
-		t.Tags = newt
-		doImport(t)
-	}
-	return 0
-}
-
-func markReviewed(t task) int {
-	if !isReviewed(t) {
-		if len(t.Completed) == 0 {
-			t.Reviewed = time.Now().UTC().Format(stamp)
-		} else {
-			t.Tags = append(t.Tags, *reviewTag)
-		}
-	}
-	doImport(t)
-	return 1
-}
-
-func deleteTask(t task) int {
-	t.Status = "deleted"
-	doImport(t)
-	return 1
-}
-
-func markDone(t task) int {
-	t.Status = "completed"
-	doImport(t)
-	return 1
-}
-
-func editTaskColor(t task) int {
-	tags := t.Tags[:0]
-	for _, tag := range t.Tags {
-		if tag != "red" && tag != "green" && tag != "blue" {
-			tags = append(tags, tag)
-		}
-	}
-
-	ch := showAndGetResponse("Task Color", "color")
-	if a, ok := short.MapsTo(ch, "color"); ok {
-		tags = append(tags, a)
-	} else {
-		return 0
-	}
-	t.Tags = tags
-	doImport(t)
-	return 0
-}
-
-// doImport imports the task.
-func doImport(t task) {
-	if len(t.Uuid) > 0 {
-		// If the task gets externally modified, we'd end up blindly overwriting those changes.
-		// So, run this check first for the mod time, and ensure that it's the same, before importing
-		// the modified task.
-		tasks, err := getTasks(t.Uuid)
-		if err != nil {
-			log.Fatalf("Error %v while retrieving tasks with UUID: %v", err, t.Uuid)
-			return
-		}
-		if len(tasks) > 1 {
-			log.Fatalf("Didn't expect to see more than 1 task with the same UUID: %v", t.Uuid)
-		}
-		if len(tasks) == 1 {
-			prev := tasks[0]
-			if prev.Modified != t.Modified {
-				c := color.New(color.BgRed, color.FgWhite)
-				c.Printf(
-					"Task's mod time has changed [%q -> %q]. Please refresh before updating.",
-					t.Modified, prev.Modified)
-				fmt.Printf("\nPress enter to refresh.\n")
-				r := make([]byte, 1)
-				os.Stdin.Read(r)
-				return
-			}
-		}
-	}
-
-	body, err := json.Marshal(t)
-	if err != nil {
-		log.Fatalf("While importing: %v", err)
-	}
-
-	cmd := fmt.Sprintf("echo -n %q | task import", body)
-	out, err := exec.Command("bash", "-c", cmd).Output()
-	if err != nil {
-		log.Fatal(errors.Wrapf(err, "doImport [%v] out:%q", cmd, out))
-	}
-}
-
 func getTasks(filter string) ([]task, error) {
 	var cmd *exec.Cmd
-	var completed bool
+	var completed int
 	if len(filter) > 0 {
 		args := strings.Split(filter, " ")
 		args = append(args, "export")
 		argf := args[:0]
 		for _, arg := range args {
 			if arg == "_end" {
-				completed = true
+				completed++
 				continue
 			}
 			argf = append(argf, arg)
@@ -476,8 +274,8 @@ func getTasks(filter string) ([]task, error) {
 			}
 		}
 
-		if completed {
-			if now.Sub(end) < 7*24*time.Hour {
+		if completed > 0 {
+			if now.Sub(end) < time.Duration(completed)*7*24*time.Hour {
 				final = append(final, t)
 			}
 		} else {
@@ -502,55 +300,33 @@ func lineInputMode() {
 	exec.Command("stty", "-F", "/dev/tty", "echo").Run()
 }
 
-func hasColorTag(tk task) bool {
-	for _, t := range tk.Tags {
-		if t == "green" || t == "blue" || t == "red" {
-			return true
-		}
-	}
-	return false
-}
-
-func isReviewed(tk task) bool {
-	now := time.Now().UTC()
-	if len(tk.Completed) == 0 {
-		// Incomplete task. So, only update local version.
-		if len(tk.Reviewed) > 0 {
-			rev, err := time.Parse(stamp, tk.Reviewed)
-			if err == nil {
-				if now.Sub(rev) < 24*time.Hour {
-					return true
-				}
-			}
-		}
-	} else {
-		// Task has been completed. So, add a reviewed tag.
-		for _, t := range tk.Tags {
-			if t == *reviewTag {
-				return true
-			}
-		}
-	}
-	return false
-}
-
 func showAndReviewTasks(orig []task) {
 	fmt.Println()
 	var tasks []task
 
 	for _, tk := range orig {
-		if !showAll && isReviewed(tk) {
+		if !showAll && tk.isReviewed() {
 			continue
 		}
 		tasks = append(tasks, tk)
 	}
 	if !showAll {
-		fmt.Printf("%d tasks already reviewed.\n", len(orig)-len(tasks))
+		fmt.Printf("> %d tasks already reviewed.\n", len(orig)-len(tasks))
 	} else {
-		fmt.Println("Showing all tasks.")
+		fmt.Println("> Showing all tasks.")
 	}
 
 SHOW:
+	switch sortBy {
+	case URGENCY:
+		fmt.Println("> Sorted by Urgency.")
+	case COLOR:
+		fmt.Println("> Sorted by Color.")
+	case DATE:
+		fmt.Println("> Sorted by Date.")
+	}
+	fmt.Println()
+
 	for i, tk := range tasks {
 		if i >= 30 {
 			break
@@ -558,15 +334,7 @@ SHOW:
 		printSummary(tk, i, len(tasks))
 	}
 
-	fmt.Println()
-	if len(tasks) == 0 {
-		fmt.Println("Found 0 tasks. Press anything to continue.")
-		r := make([]byte, 1)
-		os.Stdin.Read(r)
-		return
-	}
-
-	fmt.Printf("Found %d tasks.\n", len(tasks))
+	fmt.Printf("\nFound %d tasks.\n", len(tasks))
 	short.Print("tasks", true)
 	b := make([]byte, 1)
 	os.Stdin.Read(b)
@@ -595,10 +363,10 @@ SHOW:
 	case "fix":
 		for i := 0; i < len(tasks); i++ {
 			tk := &tasks[i]
-			if !hasColorTag(*tk) {
+			if len(tk.colorTag()) == 0 {
 				fmt.Printf("Fixing task: %v\n", tk.Description)
 				tk.Tags = append(tk.Tags, "green")
-				doImport(*tk)
+				tk.doImport()
 			}
 		}
 		clear()
@@ -610,6 +378,11 @@ SHOW:
 		goto SHOW
 	case "sort by date":
 		sortBy = DATE
+		sort.Sort(ByDefined(tasks))
+		clear()
+		goto SHOW
+	case "sort by color":
+		sortBy = COLOR
 		sort.Sort(ByDefined(tasks))
 		clear()
 		goto SHOW
@@ -664,24 +437,8 @@ func runShell(filter string) string {
 	case "quit":
 		return "-1"
 	case "clear":
-		args := strings.Split(filter, " ")
-		final := args[:0]
-		var found bool
-		for _, arg := range args {
-			if arg != "_end" {
-				final = append(final, arg)
-			} else {
-				found = true
-			}
-		}
-		if !found || len(final) == 0 {
-			return ""
-		}
-		return strings.Join(final, " ")
+		return ""
 	case "completed":
-		if strings.Index(filter, " _end") >= 0 {
-			return filter
-		}
 		return filter + " _end"
 	case "assigned":
 		ch := showAndGetResponse("Assign To", "user")
@@ -733,7 +490,7 @@ func runShell(filter string) string {
 			Tags:    tags,
 		}
 		fmt.Println()
-		editDescription(t)
+		t.editDescription()
 		return filter
 	default:
 		return filter
@@ -786,12 +543,14 @@ func generateMappings() {
 	short.BestEffortAssign('q', "quit", "task")
 	short.BestEffortAssign('x', "delete", "task")
 	short.BestEffortAssign('d', "done", "task")
+	short.BestEffortAssign('i', "disputed", "task")
 
 	short.BestEffortAssign('f', "fix", "tasks")
 	short.BestEffortAssign('a', "toggle show all", "tasks")
 	short.BestEffortAssign('r', "review", "tasks")
 	short.BestEffortAssign('u', "sort by urgency", "tasks")
 	short.BestEffortAssign('d', "sort by date", "tasks")
+	short.BestEffortAssign('c', "sort by color", "tasks")
 	short.BestEffortAssign('g', "goto", "tasks")
 }
 
