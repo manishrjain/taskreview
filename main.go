@@ -215,7 +215,7 @@ func printInfo(tk task, idx, total int) int {
 	case "done":
 		return tk.markDone()
 	case "disputed":
-		return tk.markDisputed()
+		return tk.toggleDisputed()
 	default:
 		return 1
 	}

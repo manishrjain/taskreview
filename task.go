@@ -128,11 +128,24 @@ func (tk task) isDisputed() bool {
 	return false
 }
 
-func (tk task) markDisputed() int {
-	if tk.isDisputed() {
-		return 1
+func toggle(t []string, something string) []string {
+	f := t[:0]
+	var found bool
+	for _, e := range t {
+		if e != something {
+			f = append(f, e)
+		} else {
+			found = true
+		}
 	}
-	tk.Tags = append(tk.Tags, kDisputed)
+	if !found {
+		f = append(f, something)
+	}
+	return f
+}
+
+func (tk task) toggleDisputed() int {
+	tk.Tags = toggle(tk.Tags, kDisputed)
 	tk.doImport()
 	return 1
 }
