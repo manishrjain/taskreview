@@ -477,7 +477,7 @@ func runShell(filter string) string {
 		if len(user) == 0 {
 			ch := showAndGetResponse("Assign To", "user")
 			if a, ok := short.MapsTo(ch, "user"); ok {
-				user = a
+				user = "@" + a
 			} else {
 				return filter
 			}
