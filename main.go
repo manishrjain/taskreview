@@ -347,6 +347,9 @@ SHOW:
 	switch ins {
 	case "goto":
 		i = getJump()
+		if i == -1 {
+			break
+		}
 		fallthrough
 	case "review":
 		for i < len(tasks) {
@@ -401,7 +404,7 @@ func getJump() int {
 	}
 	j, err := strconv.Atoi(jump[:len(jump)-1])
 	if err != nil {
-		log.Fatal(err)
+		return -1
 	}
 	return j
 }
