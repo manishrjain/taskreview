@@ -416,6 +416,20 @@ func clear() {
 	fmt.Println()
 }
 
+func searchTerms() string {
+	fmt.Println()
+	lineInputMode()
+	defer singleCharMode()
+
+	reader := bufio.NewReader(os.Stdin)
+	fmt.Printf("Enter search terms: ")
+	desc, err := reader.ReadString('\n')
+	if err != nil {
+		log.Fatal(err)
+	}
+	return strings.Trim(desc, " \n")
+}
+
 func runShell(filter string) string {
 	clear()
 	short.Print("help", true)
@@ -443,6 +457,10 @@ func runShell(filter string) string {
 		return ""
 	case "completed":
 		return filter + " _end"
+	case "search":
+		terms := searchTerms()
+		return filter + " " + terms
+
 	case "assigned":
 		ch := showAndGetResponse("Assign To", "user")
 		if a, ok := short.MapsTo(ch, "user"); ok {
@@ -535,6 +553,7 @@ func generateMappings() {
 	short.BestEffortAssign('p', "project", "help")
 	short.BestEffortAssign('n', "new", "help")
 	short.BestEffortAssign('t', "tag", "help")
+	short.BestEffortAssign('s', "search", "help")
 
 	short.BestEffortAssign('e', "description", "task")
 	short.BestEffortAssign('a', "assigned", "task")
