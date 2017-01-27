@@ -209,11 +209,11 @@ func printInfo(tk task, idx, total int) int {
 	case "tags":
 		return tk.editTags()
 	case "reviewed":
-		return tk.markReviewed()
+		return tk.toggleReviewed()
 	case "delete":
 		return tk.deleteTask()
 	case "done":
-		return tk.markDone()
+		return tk.toggleDone()
 	case "disputed":
 		return tk.toggleDisputed()
 	default:

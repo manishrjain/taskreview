@@ -107,7 +107,7 @@ func (tk task) isReviewed() bool {
 			}
 		}
 	} else {
-		// Task has been completed. So, add a reviewed tag.
+		// Task has been completed. So, check for review tag.
 		for _, t := range tk.Tags {
 			if t == *reviewTag {
 				return true
@@ -126,6 +126,16 @@ func (tk task) isDisputed() bool {
 		}
 	}
 	return false
+}
+
+func remove(t []string, something string) []string {
+	f := t[:0]
+	for _, e := range t {
+		if e != something {
+			f = append(f, e)
+		}
+	}
+	return f
 }
 
 func toggle(t []string, something string) []string {
@@ -150,15 +160,22 @@ func (tk task) toggleDisputed() int {
 	return 1
 }
 
-func (t task) markDone() int {
-	t.Status = "completed"
+func (t task) toggleDone() int {
+	if t.Status == "completed" {
+		t.Status = "pending"
+		t.Completed = ""
+	} else {
+		t.Status = "completed"
+	}
 	t.doImport()
 	return 1
 }
 
-func (t task) markReviewed() int {
+func (t task) toggleReviewed() int {
 	if t.isReviewed() {
-		return 1
+		t.Reviewed = ""
+		t.Tags = remove(t.Tags, *reviewTag)
+		return 0
 	}
 	if len(t.Completed) == 0 {
 		t.Reviewed = time.Now().UTC().Format(stamp)
